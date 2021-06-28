@@ -956,6 +956,12 @@ func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*ms
 
 	pr := c.Node.PendingReconfigurations
 
+	// TODO(harrymknight) PendingReconfigurations should be appended with the outcome of the latest config transaction
+	//  i.e. the new network state config after accounting for the addition/removal/rotation of an ordering node.
+	//  For the sake of simplicity its first entry, i.e. the outcome of the oldest config transaction, should be returned
+	//  when Snap is called. An entry should be returned TWICE before it is removed from PendingReconfigurations.
+	//  This is to ensure that the current Epoch of Mir ends and then progresses to the next with the new network config.
+	//  PS, It would be good if someone else double checks the checkpointing logic of Mir.
 	c.Node.PendingReconfigurations = nil
 
 	data, err := proto.Marshal(&msgs.NetworkState{
@@ -970,6 +976,11 @@ func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*ms
 
 	}
 
+	// TODO(harrymknight) This logic here isn't quite right. Recall that Snaps exist so that TransferTo can be called
+	//  to catch up a newly added node or one that has fallen out of sync. TransferTo passes a CheckpointSeqNo from which it expects
+	//  the network configuration at that CheckpointSeqNo. This CheckpointSeqNo isn't simply incremented but increased
+	//  by the checkpoint interval of the current epoch. The local CheckpointSeqNo of this node should therefore be incremented by the
+	//  checkpoint interval of the networkConfig is has received.
 	c.Node.CheckpointSeqNo++
 
 	countValue := make([]byte, 8)
@@ -997,6 +1008,10 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 
 	checkSeqNo := snap[:8] //get the sequence number of the snap
 
+	// TODO(harrymknight) Unfortunately this operation won't currently work as if TransferTo is
+	//  called by this node then it is either new or has fallen out of sync meaning
+	//  it will necessarily lack the local snap files which map to the given CheckpointSeqNo.
+	//  These must therefore be retrieved from the other ordering nodes via rpc calls.
 	snapShot, err := c.Node.ReadSnapFiles(binary.BigEndian.Uint64(checkSeqNo), c.opts.SnapDir)
 
 	if err != nil {
