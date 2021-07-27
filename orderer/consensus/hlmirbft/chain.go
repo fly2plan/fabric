@@ -360,6 +360,8 @@ func (c *Chain) Start() {
 	c.Node.start(c.fresh, isJoin)
 
 	close(c.startC)
+	//JIRA FLY2-98 close the error channel
+	close(c.errorC)
 
 	go c.run()
 }
