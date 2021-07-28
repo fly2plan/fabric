@@ -392,10 +392,8 @@ func (c *Chain) Configure(env *common.Envelope, configSeq uint64) error {
 //
 // In any other case, it returns right away.
 func (c *Chain) WaitReady() error {
-	if err := c.isRunning(); err != nil {
-		return err
-	}
-
+	
+   // FLY2-59 JIRA issue
 	return nil
 }
 
