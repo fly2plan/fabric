@@ -120,7 +120,7 @@ func (n *node) start(fresh, join bool) {
 		go func() {
 			err := n.ProcessAsNewNode(n.chain.doneC, n.clock.NewTicker(2*time.Second).C(), initialNetworkState, []byte("first"))
 			if err != nil {
-				close(n.chain.errorC)
+				close(n.chain.errorC) // JIRA FLY2-98 change
 				n.logger.Error(err, "Failed to start mirbft node")
 			}
 		}()
@@ -129,7 +129,7 @@ func (n *node) start(fresh, join bool) {
 		go func() {
 			err := n.RestartProcessing(n.chain.doneC, n.clock.NewTicker(2*time.Second).C())
 			if err != nil {
-				close(n.chain.errorC)
+				close(n.chain.errorC) // JIRA FLY2-98 change
 				n.logger.Error(err, "Failed to restart mirbft node")
 			}
 		}()
