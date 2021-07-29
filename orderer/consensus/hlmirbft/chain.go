@@ -370,7 +370,7 @@ func (c *Chain) Start() {
 	c.Node.start(c.fresh, isJoin)
 
 	close(c.startC)
-
+	
 	go c.run()
 
 }
