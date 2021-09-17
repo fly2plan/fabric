@@ -1247,7 +1247,10 @@ func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*ms
 
 	}
 	//JIRA FLY2-106 Generating last block bytes to be added to snap data
-	lastBlockBytes, err := proto.Marshal(c.lastBlock)
+	lastBlockBytes, err := proto.Marshal(&common.Block{
+		Header: c.lastBlock.Header,
+		Data:   c.lastBlock.Data,
+	})
 	if err != nil {
 
 		return nil, nil, errors.WithMessage(err, "Could not marshal block")
