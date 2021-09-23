@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
+	"github.com/hyperledger-labs/mirbft/pkg/simplewal"
 	"github.com/hyperledger/fabric/common/configtx"
 	"reflect"
 	"sort"
@@ -245,7 +246,14 @@ func NewChain(
 ) (*Chain, error) {
 	lg := opts.Logger.With("channel", support.ChannelID(), "node", opts.MirBFTID)
 
-	fresh := !wal.Exist(opts.WALDir)
+	wal, err := simplewal.Open(opts.WALDir)
+	if err != nil {
+		lg.Error(err, "Failed to create WAL")
+	}
+	fresh, err := wal.IsEmpty()
+	if err != nil {
+		lg.Error(err, "Failed to read from WAL")
+	}
 	/*	//storage, err := CreateStorage(lg, opts.WALDir, opts.SnapDir, opts.MemoryStorage)
 		if err != nil {
 			return nil, errors.Errorf("failed to restore persisted raft data: %s", err)
