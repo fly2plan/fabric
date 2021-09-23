@@ -1150,26 +1150,10 @@ func (c *Chain) processBatch(batch *msgs.QEntry) error {
 
 //JIRA FLY2-48 proposed changes:Write block in accordance with the sequence number
 func (c *Chain) Apply(batch *msgs.QEntry) error {
-	c.pendingBatches[batch.SeqNo] = batch
-	index := 0 // Review comment change to rpelace append by index.
-	seqNumbers := make([]uint64, len(c.pendingBatches))
-	for k := range c.pendingBatches {
-		seqNumbers[index] = k
-		index++
+	err := c.processBatch(batch)
+	if err != nil {
+		return errors.WithMessage(err, "Batch Processing Error")
 	}
-	sort.SliceStable(seqNumbers, func(i, j int) bool { return seqNumbers[i] < seqNumbers[j] })
-	for i := 0; i < len(seqNumbers); i++ {
-		if c.Node.LastCommittedSeqNo+1 != seqNumbers[i] {
-			break
-		}
-		err := c.processBatch(c.pendingBatches[seqNumbers[i]])
-		if err != nil {
-			return errors.WithMessage(err, "Batch Processing Error")
-		}
-		delete(c.pendingBatches, seqNumbers[i])
-		c.Node.LastCommittedSeqNo++
-	}
-
 	return nil
 }
 
