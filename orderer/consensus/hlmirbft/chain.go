@@ -1306,7 +1306,6 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 	snapData := &hlmirbft.SnapData{}
 	networkState := &msgs.NetworkState{}
 	if err := proto.Unmarshal(snap, snapData); err != nil {
-
 		return nil, err
 	}
 	//JIRA FLY2-106 retrieving network state bytes and block bytes from snap data
@@ -1321,9 +1320,7 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 	}
 
 	if err := proto.Unmarshal(networkStateBytes, networkState); err != nil {
-
 		return nil, err
-
 	}
 
 	return networkState, nil
