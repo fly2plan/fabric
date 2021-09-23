@@ -818,25 +818,48 @@ func (c *Chain) catchUp(blockBytes []byte) error {
 }
 
 func (c *Chain) commitBlock(block *common.Block) {
+	if !protoutil.IsConfigBlock(block) {
+		c.support.WriteBlock(block, nil)
+		return
+	}
 
-}
+	c.support.WriteConfigBlock(block, nil)
 
-func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
+	configMembership := c.detectConfChange(block)
 
-	return &MembershipChanges{
-		NewBlockMetadata: nil,
-		NewConsenters:    nil,
-		AddedNodes:       nil,
-		RemovedNodes:     nil,
-		ConfChange:       nil,
-		RotatedNode:      0,
+	if configMembership != nil && configMembership.Changed() {
+		c.logger.Infof("Config block [%d] changes consenter set, communication should be reconfigured", block.Header.Number)
+
+		c.mirbftMetadataLock.Lock()
+		c.opts.BlockMetadata = configMembership.NewBlockMetadata
+		c.opts.Consenters = configMembership.NewConsenters
+		c.mirbftMetadataLock.Unlock()
+
+		if err := c.configureComm(); err != nil {
+			c.logger.Panicf("Failed to configure communication: %s", err)
+		}
 	}
 }
 
-// TODO(harry_knight) Will have to be adapted for hlmirbft as a block is written in this method (line 1047).
-// 	Unsure if equivalent ApplyConfChange method exists.
-func (c *Chain) apply(ents []raftpb.Entry) {
+func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
+	// If config is targeting THIS channel, inspect consenter set and
+	// propose Mir-BFT ConfChange if it adds/removes node.
+	configMetadata := c.newConfigMetadata(block)
 
+	if configMetadata == nil {
+		return nil
+	}
+
+	changes, err := ComputeMembershipChanges(c.opts.BlockMetadata, c.opts.Consenters, configMetadata.Consenters)
+	if err != nil {
+		c.logger.Panicf("illegal configuration change detected: %s", err)
+	}
+
+	if changes.Rotated() {
+		c.logger.Infof("Config block [%d] rotates TLS certificate of node %d", block.Header.Number, changes.RotatedNode)
+	}
+
+	return changes
 }
 
 func (c *Chain) isConfig(env *common.Envelope) bool {
