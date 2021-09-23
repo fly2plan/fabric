@@ -534,8 +534,7 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 			forwardedReqBytes := protoutil.MarshalOrPanic(forwardedReq)
 			err := c.Node.rpc.SendConsensus(nodeID, &orderer.ConsensusRequest{Channel: c.channelID, Payload: forwardedReqBytes})
 			if err != nil {
-				c.logger.Warnf("Failed to broadcast Message to Node : %d ", nodeID)
-				return err
+				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %x", nodeID, err)
 			}
 		}
 	}
