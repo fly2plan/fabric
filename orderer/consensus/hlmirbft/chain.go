@@ -717,6 +717,7 @@ func (c *Chain) checkMsg(msg *orderer.SubmitRequest) (err error) {
 func (c *Chain) proposeMsg(msg *orderer.SubmitRequest, sender uint64) (err error) {
 	clientID := sender
 	proposer := c.Node.Client(clientID)
+	c.mirbftMetadataLock.Lock()
 	//Incrementation of the reqNo of a client should only ever be caused by the node the client belongs to
 	reqNo, err := proposer.NextReqNo()
 
@@ -744,6 +745,7 @@ func (c *Chain) proposeMsg(msg *orderer.SubmitRequest, sender uint64) (err error
 	}
 
 	err = proposer.Propose(context.Background(), reqNo, reqBytes)
+	c.mirbftMetadataLock.Unlock()
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to propose message to client %d", clientID)
