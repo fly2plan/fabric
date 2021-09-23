@@ -36,7 +36,6 @@ import (
 	"github.com/pkg/errors"
 	"go.etcd.io/etcd/raft"
 	"go.etcd.io/etcd/raft/raftpb"
-
 )
 
 const (
@@ -245,7 +244,7 @@ func NewChain(
 	observeC chan<- raft.SoftState,
 ) (*Chain, error) {
 	lg := opts.Logger.With("channel", support.ChannelID(), "node", opts.MirBFTID)
-   //FLY2-167 :use simplewal to check WAL exits .
+
 	wal, err := simplewal.Open(opts.WALDir)
 	if err != nil {
 		lg.Error(err, "could not open WAL")
