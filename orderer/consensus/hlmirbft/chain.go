@@ -1136,7 +1136,6 @@ func (c *Chain) processBatch(batch *msgs.QEntry) error {
 
 		} else {
 			envs = append(envs, env)
-
 		}
 	}
 	if len(envs) != 0 {
@@ -1297,9 +1296,7 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 	//JIRA FLY2-106 using block data to catch up and synchronise with rest of the nodes
 	err := c.catchUp(blockBytes)
 	if err != nil {
-
 		return nil, errors.WithMessage(err, "Catchup failed")
-
 	}
 
 	if err := proto.Unmarshal(networkStateBytes, networkState); err != nil {
