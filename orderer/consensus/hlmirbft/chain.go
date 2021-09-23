@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"github.com/hyperledger/fabric/common/configtx"
 	"reflect"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
