@@ -253,27 +253,6 @@ func NewChain(
 	if err != nil {
 		lg.Error(err, "could not query WAL")
 	}
-	/*	//storage, err := CreateStorage(lg, opts.WALDir, opts.SnapDir, opts.MemoryStorage)
-		if err != nil {
-			return nil, errors.Errorf("failed to restore persisted raft data: %s", err)
-		}
-		if opts.SnapshotCatchUpEntries == 0 {
-			storage.SnapshotCatchUpEntries = DefaultSnapshotCatchUpEntries
-		} else {
-			storage.SnapshotCatchUpEntries = opts.SnapshotCatchUpEntries
-		}
-		sizeLimit := opts.SnapshotIntervalSize
-		if sizeLimit == 0 {
-			sizeLimit = DefaultSnapshotIntervalSize
-		}
-		// get block number in last snapshot, if exists
-		var snapBlkNum uint64
-		var cc raftpb.ConfState
-		if s := storage.Snapshot(); !raft.IsEmptySnap(s) {
-			b := protoutil.UnmarshalBlockOrPanic(s.Data)
-			snapBlkNum = b.Header.Number
-			cc = s.Metadata.ConfState
-		}*/
 
 	b := support.Block(support.Height() - 1)
 	if b == nil {
