@@ -247,11 +247,11 @@ func NewChain(
 
 	wal, err := simplewal.Open(opts.WALDir)
 	if err != nil {
-		lg.Error(err, "could not open WAL")
+		lg.Error(err, "Could not open WAL")
 	}
 	fresh, err := wal.IsEmpty()
 	if err != nil {
-		lg.Error(err, "could not query WAL")
+		lg.Error(err, "Could not query WAL")
 	}
 
 	b := support.Block(support.Height() - 1)
