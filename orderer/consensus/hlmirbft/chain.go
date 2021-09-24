@@ -21,8 +21,8 @@ import (
 
 	"code.cloudfoundry.org/clock"
 	"github.com/fly2plan/fabric-protos-go/orderer/hlmirbft"
+	"github.com/fly2plan/mirbft"
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger-labs/mirbft"
 	"github.com/hyperledger-labs/mirbft/pkg/pb/msgs"
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/orderer"

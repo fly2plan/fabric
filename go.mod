@@ -20,6 +20,7 @@ require (
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fly2plan/fabric-config v0.1.1-0.20210720100109-69fb94527cd9
 	github.com/fly2plan/fabric-protos-go v0.0.0-20210720095300-b410e4bf46cf
+	github.com/fly2plan/mirbft v0.0.0-20210924102818-ec2fd5c13c1e
 	github.com/frankban/quicktest v1.11.3 // indirect
 	github.com/fsouza/go-dockerclient v1.7.0
 	github.com/go-kit/kit v0.9.0
@@ -29,7 +30,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/hashicorp/go-version v1.2.0
-	github.com/hyperledger-labs/mirbft v0.0.0-20210513065819-2525f29404f5
+	github.com/hyperledger-labs/mirbft v0.0.0-20210708125254-8da2c6b5145c
 	github.com/hyperledger/fabric-amcl v0.0.0-20200424173818-327c9e2cf77a
 	github.com/hyperledger/fabric-chaincode-go v0.0.0-20201119163726-f8ef75b17719
 	github.com/hyperledger/fabric-config v0.1.0
@@ -66,17 +67,12 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
-	golang.org/x/mod v0.4.2 // indirect
-	golang.org/x/net v0.0.0-20210520170846-37e1c6afe023 // indirect
-	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
-	golang.org/x/sys v0.0.0-20210521090106-6ca3eb03dfc2 // indirect
-	golang.org/x/tools v0.1.0
+	golang.org/x/tools v0.1.6
 	google.golang.org/grpc v1.31.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/yaml.v2 v2.4.0
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
-	honnef.co/go/tools v0.1.3 // indirect
 )
 
 replace github.com/onsi/gomega => github.com/onsi/gomega v1.9.0
