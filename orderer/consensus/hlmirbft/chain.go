@@ -1051,8 +1051,7 @@ func (c *Chain) triggerCatchup(sn *raftpb.Snapshot) {
 }
 
 //JIRA FLY2-48 proposed changes: fetch request from request store
-func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
-
+func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*orderer.SubmitRequest, error) {
 	reqByte, err := c.Node.ReqStore.GetRequest(ack)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Cannot Fetch Request")
@@ -1060,12 +1059,11 @@ func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
 	if reqByte == nil {
 		return nil, errors.Errorf("reqstore should have request if we are committing it")
 	}
-	reqMsg := &msgs.Request{}
-	err = proto.Unmarshal(reqByte, reqMsg)
+	req, err := protoutil.UnmarshalSubmitRequest(reqByte)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Cannot Unmarshal Request")
 	}
-	return reqMsg, nil
+	return req, nil
 }
 
 //FLY2-48 proposed changes
@@ -1073,13 +1071,9 @@ func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
 func (c *Chain) processBatch(batch *msgs.QEntry) error {
 	var envs []*common.Envelope
 	for _, requestAck := range batch.Requests {
-		reqMsg, err := c.fetchRequest(requestAck)
+		req, err := c.fetchRequest(requestAck)
 		if err != nil {
 			return errors.WithMessage(err, "Cannot fetch request from Request Store")
-		}
-		req, err := protoutil.UnmarshalSubmitRequest(reqMsg.Data)
-		if err != nil {
-			return errors.WithMessage(err, "Cannot Unmarshal Request Data")
 		}
 		env := req.Payload
 		if c.isConfig(env) {
