@@ -684,7 +684,7 @@ func (c *Chain) getNewReconfiguration(envelope *common.Envelope) ([]*msgs.Reconf
 // It takes care of the revalidation of messages if the config sequence has advanced.
 
 //JIRA FLY2-57 - proposed changes -> adapted in JIRA FLY2-94
-func (c *Chain) checkMsg(msg *orderer.SubmitRequest) (err error) {
+func (c *Chain) checkReq(msg *orderer.SubmitRequest) (err error) {
 	seq := c.support.Sequence()
 
 	if msg.LastValidationSeq < seq {
