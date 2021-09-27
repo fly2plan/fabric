@@ -700,38 +700,13 @@ func (c *Chain) checkReq(msg *orderer.SubmitRequest) (err error) {
 }
 
 //FLY2-57 - Proposed Change: New function to propose normal messages to node -> adapted in JIRA FLY2-94
-func (c *Chain) proposeMsg(msg *orderer.SubmitRequest, sender uint64) (err error) {
-	clientID := sender
+func (c *Chain) proposeMsg(msg *msgs.Request) (err error) {
+	clientID := msg.ClientId
+	reqNo := msg.ReqNo
+	data := msg.Data
 	proposer := c.Node.Client(clientID)
-	c.mirbftMetadataLock.Lock()
-	//Incrementation of the reqNo of a client should only ever be caused by the node the client belongs to
-	reqNo, err := proposer.NextReqNo()
 
-	if err != nil {
-		return errors.Errorf("failed to generate next request number")
-	}
-
-	//FLY2-48-proposed change:In apply function,Block generation requires *Common.Envelope rather than payload data byte .*Common.Envelope helps to identify request id config or not
-
-	data, err := proto.Marshal(msg)
-
-	if err != nil {
-		return errors.Errorf("Cannot marshal payload")
-	}
-	req := &msgs.Request{
-		ClientId: clientID,
-		ReqNo:    reqNo,
-		Data:     data,
-	}
-
-	reqBytes, err := proto.Marshal(req)
-
-	if err != nil {
-		return errors.Errorf("Cannot marshal Message : %s", err)
-	}
-
-	err = proposer.Propose(context.Background(), reqNo, reqBytes)
-	c.mirbftMetadataLock.Unlock()
+	err = proposer.Propose(context.Background(), reqNo, data)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to propose message to client %d", clientID)
