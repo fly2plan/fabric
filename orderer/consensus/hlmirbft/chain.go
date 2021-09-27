@@ -513,24 +513,48 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 		return err
 	}
 
-	reqBytes := protoutil.MarshalOrPanic(req)
-	for nodeID, _ := range c.opts.Consenters {
-		if nodeID != c.MirBFTID {
-			forwardedReq := &msgs.Msg{Type: &msgs.Msg_ForwardRequest{ForwardRequest: &msgs.ForwardRequest{RequestData: reqBytes, RequestAck: nil}}}
-			forwardedReqBytes := protoutil.MarshalOrPanic(forwardedReq)
-			err := c.Node.rpc.SendConsensus(nodeID, &orderer.ConsensusRequest{Channel: c.channelID, Payload: forwardedReqBytes})
-			if err != nil {
-				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %x", nodeID, err)
-			}
+	// If the request has been forwarded to this node
+	if sender > 0 {
+		msg := &msgs.Request{}
+		if err := proto.Unmarshal(req.Payload.Payload, msg); err != nil {
+			return err
 		}
+		return c.proposeMsg(msg)
 	}
 
-	if err := c.checkMsg(req); err != nil {
+	if err := c.checkReq(req); err != nil {
 		return err
 	}
 
-	//This request was sent by a Fabric application
-	return c.proposeMsg(req, c.MirBFTID)
+	// Otherwise forward the request to the other nodes and propose it
+	c.mirbftMetadataLock.Lock()
+	proposer := c.Node.Client(c.MirBFTID)
+	nextReqNo, err := proposer.NextReqNo()
+	if err != nil {
+		return errors.Errorf("Failed to generate next request number")
+	}
+	reqBytes := protoutil.MarshalOrPanic(req)
+	msgToProcess := &msgs.Request{ClientId: c.MirBFTID, ReqNo: nextReqNo, Data: reqBytes}
+	msgToProcessBytes := protoutil.MarshalOrPanic(msgToProcess)
+	for nodeID, _ := range c.opts.Consenters {
+		if nodeID != c.MirBFTID {
+			err := c.Node.rpc.SendSubmit(nodeID,
+				&orderer.SubmitRequest{
+					Channel: c.channelID,
+					Payload: &common.Envelope{
+						Payload:   msgToProcessBytes,
+						Signature: req.Payload.Signature,
+					}})
+			if err != nil {
+				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %v", nodeID, err)
+			}
+		}
+	}
+	if err := c.proposeMsg(msgToProcess); err != nil {
+		return err
+	}
+	c.mirbftMetadataLock.Unlock()
+	return nil
 }
 
 type apply struct {
