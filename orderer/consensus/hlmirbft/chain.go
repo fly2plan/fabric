@@ -467,24 +467,6 @@ func (c *Chain) Consensus(req *orderer.ConsensusRequest, sender uint64) error {
 		return fmt.Errorf("failed to unmarshal StepRequest payload to Raft Message: %s", err)
 	}
 
-	// Check if the request is a forwarded transaction
-	switch t := stepMsg.Type.(type) {
-	case *msgs.Msg_ForwardRequest:
-		// If this forwarded request has no acknowledgements
-		// then it has only been sent to a node by a Fabric application
-		// and then forwarded to at least f+1 nodes
-		if t.ForwardRequest.RequestAck == nil {
-			forwardedReq := &orderer.SubmitRequest{}
-			if err := proto.Unmarshal(t.ForwardRequest.RequestData, forwardedReq); err != nil {
-				return fmt.Errorf("failed to unmarshal ForwardedRequest payload to SubmitRequest: %s", err)
-			}
-			if err := c.checkMsg(forwardedReq); err != nil {
-				return err
-			}
-			return c.proposeMsg(forwardedReq, sender)
-		}
-	}
-
 	if err := c.Node.Step(context.TODO(), sender, stepMsg); err != nil {
 		return fmt.Errorf("failed to process Mir-BFT Step message: %s", err)
 	}
@@ -512,24 +494,48 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 		return err
 	}
 
-	reqBytes := protoutil.MarshalOrPanic(req)
-	for nodeID, _ := range c.opts.Consenters {
-		if nodeID != c.MirBFTID {
-			forwardedReq := &msgs.Msg{Type: &msgs.Msg_ForwardRequest{ForwardRequest: &msgs.ForwardRequest{RequestData: reqBytes, RequestAck: nil}}}
-			forwardedReqBytes := protoutil.MarshalOrPanic(forwardedReq)
-			err := c.Node.rpc.SendConsensus(nodeID, &orderer.ConsensusRequest{Channel: c.channelID, Payload: forwardedReqBytes})
-			if err != nil {
-				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %x", nodeID, err)
-			}
+	// If the request has been forwarded to this node
+	if sender > 0 {
+		msg := &msgs.Request{}
+		if err := proto.Unmarshal(req.Payload.Payload, msg); err != nil {
+			return err
 		}
+		return c.proposeMsg(msg)
 	}
 
-	if err := c.checkMsg(req); err != nil {
+	if err := c.checkReq(req); err != nil {
 		return err
 	}
 
-	//This request was sent by a Fabric application
-	return c.proposeMsg(req, c.MirBFTID)
+	// Otherwise forward the request to the other nodes and propose it
+	c.mirbftMetadataLock.Lock()
+	proposer := c.Node.Client(c.MirBFTID)
+	nextReqNo, err := proposer.NextReqNo()
+	if err != nil {
+		return errors.Errorf("Failed to generate next request number")
+	}
+	reqBytes := protoutil.MarshalOrPanic(req)
+	msgToProcess := &msgs.Request{ClientId: c.MirBFTID, ReqNo: nextReqNo, Data: reqBytes}
+	msgToProcessBytes := protoutil.MarshalOrPanic(msgToProcess)
+	for nodeID, _ := range c.opts.Consenters {
+		if nodeID != c.MirBFTID {
+			err := c.Node.rpc.SendSubmit(nodeID,
+				&orderer.SubmitRequest{
+					Channel: c.channelID,
+					Payload: &common.Envelope{
+						Payload:   msgToProcessBytes,
+						Signature: req.Payload.Signature,
+					}})
+			if err != nil {
+				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %v", nodeID, err)
+			}
+		}
+	}
+	if err := c.proposeMsg(msgToProcess); err != nil {
+		return err
+	}
+	c.mirbftMetadataLock.Unlock()
+	return nil
 }
 
 type apply struct {
@@ -683,7 +689,7 @@ func (c *Chain) getNewReconfiguration(envelope *common.Envelope) ([]*msgs.Reconf
 // It takes care of the revalidation of messages if the config sequence has advanced.
 
 //JIRA FLY2-57 - proposed changes -> adapted in JIRA FLY2-94
-func (c *Chain) checkMsg(msg *orderer.SubmitRequest) (err error) {
+func (c *Chain) checkReq(msg *orderer.SubmitRequest) (err error) {
 	seq := c.support.Sequence()
 
 	if msg.LastValidationSeq < seq {
@@ -699,38 +705,13 @@ func (c *Chain) checkMsg(msg *orderer.SubmitRequest) (err error) {
 }
 
 //FLY2-57 - Proposed Change: New function to propose normal messages to node -> adapted in JIRA FLY2-94
-func (c *Chain) proposeMsg(msg *orderer.SubmitRequest, sender uint64) (err error) {
-	clientID := sender
+func (c *Chain) proposeMsg(msg *msgs.Request) (err error) {
+	clientID := msg.ClientId
+	reqNo := msg.ReqNo
+	data := msg.Data
 	proposer := c.Node.Client(clientID)
-	c.mirbftMetadataLock.Lock()
-	//Incrementation of the reqNo of a client should only ever be caused by the node the client belongs to
-	reqNo, err := proposer.NextReqNo()
 
-	if err != nil {
-		return errors.Errorf("failed to generate next request number")
-	}
-
-	//FLY2-48-proposed change:In apply function,Block generation requires *Common.Envelope rather than payload data byte .*Common.Envelope helps to identify request id config or not
-
-	data, err := proto.Marshal(msg)
-
-	if err != nil {
-		return errors.Errorf("Cannot marshal payload")
-	}
-	req := &msgs.Request{
-		ClientId: clientID,
-		ReqNo:    reqNo,
-		Data:     data,
-	}
-
-	reqBytes, err := proto.Marshal(req)
-
-	if err != nil {
-		return errors.Errorf("Cannot marshal Message : %s", err)
-	}
-
-	err = proposer.Propose(context.Background(), reqNo, reqBytes)
-	c.mirbftMetadataLock.Unlock()
+	err = proposer.Propose(context.Background(), reqNo, data)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to propose message to client %d", clientID)
@@ -1069,8 +1050,7 @@ func (c *Chain) triggerCatchup(sn *raftpb.Snapshot) {
 }
 
 //JIRA FLY2-48 proposed changes: fetch request from request store
-func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
-
+func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*orderer.SubmitRequest, error) {
 	reqByte, err := c.Node.ReqStore.GetRequest(ack)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Cannot Fetch Request")
@@ -1078,12 +1058,11 @@ func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
 	if reqByte == nil {
 		return nil, errors.Errorf("reqstore should have request if we are committing it")
 	}
-	reqMsg := &msgs.Request{}
-	err = proto.Unmarshal(reqByte, reqMsg)
+	req, err := protoutil.UnmarshalSubmitRequest(reqByte)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Cannot Unmarshal Request")
 	}
-	return reqMsg, nil
+	return req, nil
 }
 
 //FLY2-48 proposed changes
@@ -1091,13 +1070,9 @@ func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
 func (c *Chain) processBatch(batch *msgs.QEntry) error {
 	var envs []*common.Envelope
 	for _, requestAck := range batch.Requests {
-		reqMsg, err := c.fetchRequest(requestAck)
+		req, err := c.fetchRequest(requestAck)
 		if err != nil {
 			return errors.WithMessage(err, "Cannot fetch request from Request Store")
-		}
-		req, err := protoutil.UnmarshalSubmitRequest(reqMsg.Data)
-		if err != nil {
-			return errors.WithMessage(err, "Cannot Unmarshal Request Data")
 		}
 		env := req.Payload
 		if c.isConfig(env) {
