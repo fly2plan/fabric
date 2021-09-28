@@ -12,7 +12,6 @@ import (
 	"github.com/hyperledger-labs/mirbft/pkg/simplewal"
 	"github.com/hyperledger/fabric/common/configtx"
 	"reflect"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1123,7 +1122,6 @@ func (c *Chain) processBatch(batch *msgs.QEntry) error {
 
 		} else {
 			envs = append(envs, env)
-
 		}
 	}
 	if len(envs) != 0 {
@@ -1136,26 +1134,10 @@ func (c *Chain) processBatch(batch *msgs.QEntry) error {
 
 //JIRA FLY2-48 proposed changes:Write block in accordance with the sequence number
 func (c *Chain) Apply(batch *msgs.QEntry) error {
-	c.pendingBatches[batch.SeqNo] = batch
-	index := 0 // Review comment change to rpelace append by index.
-	seqNumbers := make([]uint64, len(c.pendingBatches))
-	for k := range c.pendingBatches {
-		seqNumbers[index] = k
-		index++
+	err := c.processBatch(batch)
+	if err != nil {
+		return errors.WithMessage(err, "Batch Processing Error")
 	}
-	sort.SliceStable(seqNumbers, func(i, j int) bool { return seqNumbers[i] < seqNumbers[j] })
-	for i := 0; i < len(seqNumbers); i++ {
-		if c.Node.LastCommittedSeqNo+1 != seqNumbers[i] {
-			break
-		}
-		err := c.processBatch(c.pendingBatches[seqNumbers[i]])
-		if err != nil {
-			return errors.WithMessage(err, "Batch Processing Error")
-		}
-		delete(c.pendingBatches, seqNumbers[i])
-		c.Node.LastCommittedSeqNo++
-	}
-
 	return nil
 }
 
@@ -1300,9 +1282,7 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 	//JIRA FLY2-106 using block data to catch up and synchronise with rest of the nodes
 	err := c.catchUp(blockBytes)
 	if err != nil {
-
 		return nil, errors.WithMessage(err, "Catchup failed")
-
 	}
 
 	if err := proto.Unmarshal(networkStateBytes, networkState); err != nil {
