@@ -12,7 +12,6 @@ import (
 	"github.com/hyperledger-labs/mirbft/pkg/simplewal"
 	"github.com/hyperledger/fabric/common/configtx"
 	"reflect"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,8 +20,8 @@ import (
 
 	"code.cloudfoundry.org/clock"
 	"github.com/fly2plan/fabric-protos-go/orderer/hlmirbft"
+	"github.com/fly2plan/mirbft"
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger-labs/mirbft"
 	"github.com/hyperledger-labs/mirbft/pkg/pb/msgs"
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/orderer"
@@ -247,11 +246,11 @@ func NewChain(
 
 	wal, err := simplewal.Open(opts.WALDir)
 	if err != nil {
-		lg.Error(err, "could not open WAL")
+		lg.Error(err, "Could not open WAL")
 	}
 	fresh, err := wal.IsEmpty()
 	if err != nil {
-		lg.Error(err, "could not query WAL")
+		lg.Error(err, "Could not query WAL")
 	}
 
 	b := support.Block(support.Height() - 1)
@@ -468,24 +467,6 @@ func (c *Chain) Consensus(req *orderer.ConsensusRequest, sender uint64) error {
 		return fmt.Errorf("failed to unmarshal StepRequest payload to Raft Message: %s", err)
 	}
 
-	// Check if the request is a forwarded transaction
-	switch t := stepMsg.Type.(type) {
-	case *msgs.Msg_ForwardRequest:
-		// If this forwarded request has no acknowledgements
-		// then it has only been sent to a node by a Fabric application
-		// and then forwarded to at least f+1 nodes
-		if t.ForwardRequest.RequestAck == nil {
-			forwardedReq := &orderer.SubmitRequest{}
-			if err := proto.Unmarshal(t.ForwardRequest.RequestData, forwardedReq); err != nil {
-				return fmt.Errorf("failed to unmarshal ForwardedRequest payload to SubmitRequest: %s", err)
-			}
-			if err := c.checkMsg(forwardedReq); err != nil {
-				return err
-			}
-			return c.proposeMsg(forwardedReq, sender)
-		}
-	}
-
 	if err := c.Node.Step(context.TODO(), sender, stepMsg); err != nil {
 		return fmt.Errorf("failed to process Mir-BFT Step message: %s", err)
 	}
@@ -513,25 +494,48 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 		return err
 	}
 
-	reqBytes := protoutil.MarshalOrPanic(req)
-	for nodeID, _ := range c.opts.Consenters {
-		if nodeID != c.MirBFTID {
-			forwardedReq := &msgs.Msg{Type: &msgs.Msg_ForwardRequest{ForwardRequest: &msgs.ForwardRequest{RequestData: reqBytes, RequestAck: nil}}}
-			forwardedReqBytes := protoutil.MarshalOrPanic(forwardedReq)
-			err := c.Node.rpc.SendConsensus(nodeID, &orderer.ConsensusRequest{Channel: c.channelID, Payload: forwardedReqBytes})
-			if err != nil {
-				c.logger.Warnf("Failed to broadcast Message to Node : %d ", nodeID)
-				return err
-			}
+	// If the request has been forwarded to this node
+	if sender > 0 {
+		msg := &msgs.Request{}
+		if err := proto.Unmarshal(req.Payload.Payload, msg); err != nil {
+			return err
 		}
+		return c.proposeMsg(msg)
 	}
 
-	if err := c.checkMsg(req); err != nil {
+	if err := c.checkReq(req); err != nil {
 		return err
 	}
 
-	//This request was sent by a Fabric application
-	return c.proposeMsg(req, c.MirBFTID)
+	// Otherwise forward the request to the other nodes and propose it
+	c.mirbftMetadataLock.Lock()
+	proposer := c.Node.Client(c.MirBFTID)
+	nextReqNo, err := proposer.NextReqNo()
+	if err != nil {
+		return errors.Errorf("Failed to generate next request number")
+	}
+	reqBytes := protoutil.MarshalOrPanic(req)
+	msgToProcess := &msgs.Request{ClientId: c.MirBFTID, ReqNo: nextReqNo, Data: reqBytes}
+	msgToProcessBytes := protoutil.MarshalOrPanic(msgToProcess)
+	for nodeID, _ := range c.opts.Consenters {
+		if nodeID != c.MirBFTID {
+			err := c.Node.rpc.SendSubmit(nodeID,
+				&orderer.SubmitRequest{
+					Channel: c.channelID,
+					Payload: &common.Envelope{
+						Payload:   msgToProcessBytes,
+						Signature: req.Payload.Signature,
+					}})
+			if err != nil {
+				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %v", nodeID, err)
+			}
+		}
+	}
+	if err := c.proposeMsg(msgToProcess); err != nil {
+		return err
+	}
+	c.mirbftMetadataLock.Unlock()
+	return nil
 }
 
 type apply struct {
@@ -685,7 +689,7 @@ func (c *Chain) getNewReconfiguration(envelope *common.Envelope) ([]*msgs.Reconf
 // It takes care of the revalidation of messages if the config sequence has advanced.
 
 //JIRA FLY2-57 - proposed changes -> adapted in JIRA FLY2-94
-func (c *Chain) checkMsg(msg *orderer.SubmitRequest) (err error) {
+func (c *Chain) checkReq(msg *orderer.SubmitRequest) (err error) {
 	seq := c.support.Sequence()
 
 	if msg.LastValidationSeq < seq {
@@ -701,36 +705,13 @@ func (c *Chain) checkMsg(msg *orderer.SubmitRequest) (err error) {
 }
 
 //FLY2-57 - Proposed Change: New function to propose normal messages to node -> adapted in JIRA FLY2-94
-func (c *Chain) proposeMsg(msg *orderer.SubmitRequest, sender uint64) (err error) {
-	clientID := sender
+func (c *Chain) proposeMsg(msg *msgs.Request) (err error) {
+	clientID := msg.ClientId
+	reqNo := msg.ReqNo
+	data := msg.Data
 	proposer := c.Node.Client(clientID)
-	//Incrementation of the reqNo of a client should only ever be caused by the node the client belongs to
-	reqNo, err := proposer.NextReqNo()
 
-	if err != nil {
-		return errors.Errorf("failed to generate next request number")
-	}
-
-	//FLY2-48-proposed change:In apply function,Block generation requires *Common.Envelope rather than payload data byte .*Common.Envelope helps to identify request id config or not
-
-	data, err := proto.Marshal(msg)
-
-	if err != nil {
-		return errors.Errorf("Cannot marshal payload")
-	}
-	req := &msgs.Request{
-		ClientId: clientID,
-		ReqNo:    reqNo,
-		Data:     data,
-	}
-
-	reqBytes, err := proto.Marshal(req)
-
-	if err != nil {
-		return errors.Errorf("Cannot marshal Message : %s", err)
-	}
-
-	err = proposer.Propose(context.Background(), reqNo, reqBytes)
+	err = proposer.Propose(context.Background(), reqNo, data)
 
 	if err != nil {
 		return errors.WithMessagef(err, "failed to propose message to client %d", clientID)
@@ -803,25 +784,48 @@ func (c *Chain) catchUp(blockBytes []byte) error {
 }
 
 func (c *Chain) commitBlock(block *common.Block) {
+	if !protoutil.IsConfigBlock(block) {
+		c.support.WriteBlock(block, nil)
+		return
+	}
 
-}
+	c.support.WriteConfigBlock(block, nil)
 
-func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
+	configMembership := c.detectConfChange(block)
 
-	return &MembershipChanges{
-		NewBlockMetadata: nil,
-		NewConsenters:    nil,
-		AddedNodes:       nil,
-		RemovedNodes:     nil,
-		ConfChange:       nil,
-		RotatedNode:      0,
+	if configMembership != nil && configMembership.Changed() {
+		c.logger.Infof("Config block [%d] changes consenter set, communication should be reconfigured", block.Header.Number)
+
+		c.mirbftMetadataLock.Lock()
+		c.opts.BlockMetadata = configMembership.NewBlockMetadata
+		c.opts.Consenters = configMembership.NewConsenters
+		c.mirbftMetadataLock.Unlock()
+
+		if err := c.configureComm(); err != nil {
+			c.logger.Panicf("Failed to configure communication: %s", err)
+		}
 	}
 }
 
-// TODO(harry_knight) Will have to be adapted for hlmirbft as a block is written in this method (line 1047).
-// 	Unsure if equivalent ApplyConfChange method exists.
-func (c *Chain) apply(ents []raftpb.Entry) {
+func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
+	// If config is targeting THIS channel, inspect consenter set and
+	// propose Mir-BFT ConfChange if it adds/removes node.
+	configMetadata := c.newConfigMetadata(block)
 
+	if configMetadata == nil {
+		return nil
+	}
+
+	changes, err := ComputeMembershipChanges(c.opts.BlockMetadata, c.opts.Consenters, configMetadata.Consenters)
+	if err != nil {
+		c.logger.Panicf("illegal configuration change detected: %s", err)
+	}
+
+	if changes.Rotated() {
+		c.logger.Infof("Config block [%d] rotates TLS certificate of node %d", block.Header.Number, changes.RotatedNode)
+	}
+
+	return changes
 }
 
 func (c *Chain) isConfig(env *common.Envelope) bool {
@@ -1046,8 +1050,7 @@ func (c *Chain) triggerCatchup(sn *raftpb.Snapshot) {
 }
 
 //JIRA FLY2-48 proposed changes: fetch request from request store
-func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
-
+func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*orderer.SubmitRequest, error) {
 	reqByte, err := c.Node.ReqStore.GetRequest(ack)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Cannot Fetch Request")
@@ -1055,12 +1058,11 @@ func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
 	if reqByte == nil {
 		return nil, errors.Errorf("reqstore should have request if we are committing it")
 	}
-	reqMsg := &msgs.Request{}
-	err = proto.Unmarshal(reqByte, reqMsg)
+	req, err := protoutil.UnmarshalSubmitRequest(reqByte)
 	if err != nil {
 		return nil, errors.WithMessage(err, "Cannot Unmarshal Request")
 	}
-	return reqMsg, nil
+	return req, nil
 }
 
 //FLY2-48 proposed changes
@@ -1068,13 +1070,9 @@ func (c *Chain) fetchRequest(ack *msgs.RequestAck) (*msgs.Request, error) {
 func (c *Chain) processBatch(batch *msgs.QEntry) error {
 	var envs []*common.Envelope
 	for _, requestAck := range batch.Requests {
-		reqMsg, err := c.fetchRequest(requestAck)
+		req, err := c.fetchRequest(requestAck)
 		if err != nil {
 			return errors.WithMessage(err, "Cannot fetch request from Request Store")
-		}
-		req, err := protoutil.UnmarshalSubmitRequest(reqMsg.Data)
-		if err != nil {
-			return errors.WithMessage(err, "Cannot Unmarshal Request Data")
 		}
 		env := req.Payload
 		if c.isConfig(env) {
@@ -1099,7 +1097,6 @@ func (c *Chain) processBatch(batch *msgs.QEntry) error {
 
 		} else {
 			envs = append(envs, env)
-
 		}
 	}
 	if len(envs) != 0 {
@@ -1112,26 +1109,10 @@ func (c *Chain) processBatch(batch *msgs.QEntry) error {
 
 //JIRA FLY2-48 proposed changes:Write block in accordance with the sequence number
 func (c *Chain) Apply(batch *msgs.QEntry) error {
-	c.pendingBatches[batch.SeqNo] = batch
-	index := 0 // Review comment change to rpelace append by index.
-	seqNumbers := make([]uint64, len(c.pendingBatches))
-	for k := range c.pendingBatches {
-		seqNumbers[index] = k
-		index++
+	err := c.processBatch(batch)
+	if err != nil {
+		return errors.WithMessage(err, "Batch Processing Error")
 	}
-	sort.SliceStable(seqNumbers, func(i, j int) bool { return seqNumbers[i] < seqNumbers[j] })
-	for i := 0; i < len(seqNumbers); i++ {
-		if c.Node.LastCommittedSeqNo+1 != seqNumbers[i] {
-			break
-		}
-		err := c.processBatch(c.pendingBatches[seqNumbers[i]])
-		if err != nil {
-			return errors.WithMessage(err, "Batch Processing Error")
-		}
-		delete(c.pendingBatches, seqNumbers[i])
-		c.Node.LastCommittedSeqNo++
-	}
-
 	return nil
 }
 
@@ -1268,7 +1249,6 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 	snapData := &hlmirbft.SnapData{}
 	networkState := &msgs.NetworkState{}
 	if err := proto.Unmarshal(snap, snapData); err != nil {
-
 		return nil, err
 	}
 	//JIRA FLY2-106 retrieving network state bytes and block bytes from snap data
@@ -1277,15 +1257,11 @@ func (c *Chain) TransferTo(seqNo uint64, snap []byte) (*msgs.NetworkState, error
 	//JIRA FLY2-106 using block data to catch up and synchronise with rest of the nodes
 	err := c.catchUp(blockBytes)
 	if err != nil {
-
 		return nil, errors.WithMessage(err, "Catchup failed")
-
 	}
 
 	if err := proto.Unmarshal(networkStateBytes, networkState); err != nil {
-
 		return nil, err
-
 	}
 
 	return networkState, nil

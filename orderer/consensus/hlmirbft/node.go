@@ -20,7 +20,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/fly2plan/fabric-protos-go/orderer/hlmirbft"
-	"github.com/hyperledger-labs/mirbft"
+	"github.com/fly2plan/mirbft"
 	"github.com/hyperledger-labs/mirbft/pkg/eventlog"
 	"github.com/hyperledger-labs/mirbft/pkg/pb/msgs"
 	"github.com/hyperledger-labs/mirbft/pkg/reqstore"
@@ -68,52 +68,52 @@ const (
 func (n *node) start(fresh, join bool) {
 	n.logger.Debugf("Starting mirbft node: #peers: %v", len(n.metadata.ConsenterIds))
 
-		if join {
-			n.logger.Info("Starting mirbft node to join an existing channel")
-		} else {
-			n.logger.Info("Starting mirbft node as part of a new channel")
-		}
+	if join {
+		n.logger.Info("Starting mirbft node to join an existing channel")
+	} else {
+		n.logger.Info("Starting mirbft node as part of a new channel")
+	}
 
-		// Checking if the configuration settings have been passed correctly.
-		err := os.MkdirAll(n.ReqStoreDir, 0700)
-		if err != nil {
-			n.logger.Error(err, "Failed to create WAL directory")
-		}
-		wal, err := simplewal.Open(n.WALDir)
-		if err != nil {
-			n.logger.Error(err, "Failed to create WAL")
-		}
-		err = os.MkdirAll(n.ReqStoreDir, 0700)
-		if err != nil {
-			n.logger.Error(err, "Failed to create request store directory")
-		}
-		reqStore, err := reqstore.Open(n.ReqStoreDir)
-		//FL2-48 proposed changes
-		// - store the mirbft node request store instance to node
-		n.ReqStore = reqStore
-		if err != nil {
-			n.logger.Error(err, "Failed to create request store")
-		}
-		node, err := mirbft.NewNode(
-			n.chain.MirBFTID,
-			n.config,
-			&mirbft.ProcessorConfig{
-				Link:         n,
-				Hasher:       crypto.SHA256,
-				App:          n.chain,
-				WAL:          wal,
-				RequestStore: reqStore,
-				Interceptor:  eventlog.NewRecorder(n.chain.MirBFTID, &bytes.Buffer{}),
-			},
-		)
-		if err != nil {
-			n.logger.Error(err, "Failed to create mirbft node")
-		} else {
-			n.Node = *node
-		}
+	// Checking if the configuration settings have been passed correctly.
+	err := os.MkdirAll(n.ReqStoreDir, 0700)
+	if err != nil {
+		n.logger.Error(err, "Failed to create WAL directory")
+	}
+	wal, err := simplewal.Open(n.WALDir)
+	if err != nil {
+		n.logger.Error(err, "Failed to create WAL")
+	}
+	err = os.MkdirAll(n.ReqStoreDir, 0700)
+	if err != nil {
+		n.logger.Error(err, "Failed to create request store directory")
+	}
+	reqStore, err := reqstore.Open(n.ReqStoreDir)
+	//FL2-48 proposed changes
+	// - store the mirbft node request store instance to node
+	n.ReqStore = reqStore
+	if err != nil {
+		n.logger.Error(err, "Failed to create request store")
+	}
+	node, err := mirbft.NewNode(
+		n.chain.MirBFTID,
+		n.config,
+		&mirbft.ProcessorConfig{
+			Link:         n,
+			Hasher:       crypto.SHA256,
+			App:          n.chain,
+			WAL:          wal,
+			RequestStore: reqStore,
+			Interceptor:  eventlog.NewRecorder(n.chain.MirBFTID, &bytes.Buffer{}),
+		},
+	)
+	if err != nil {
+		n.logger.Error(err, "Failed to create mirbft node")
+	} else {
+		n.Node = *node
+	}
 
-		initialNetworkState := InitialNetworkState(len(n.chain.opts.Consenters))
-		//FLY2-167 - Restructured the if condition
+	initialNetworkState := InitialNetworkState(len(n.chain.opts.Consenters))
+	//FLY2-167 - Restructured the if condition
 	if fresh {
 		// TODO(harrymknight) Tick interval is fixed. Perhaps introduce TickInterval field in configuration options
 		go func() {
