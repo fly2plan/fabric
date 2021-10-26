@@ -672,7 +672,7 @@ func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, 
 		newNodeId := uint64(len(currentConsenters) + 1)
 		updatedConfig.Type = &msgs.Reconfiguration_NewClient_{NewClient: &msgs.Reconfiguration_NewClient{
 			Id:    newNodeId,
-			Width: 100,
+			Width: 10000,
 		}}
 		consenterList = append(consenterList, newNodeId)
 	} else if configChangeType < 0 {
