@@ -232,7 +232,7 @@ func (n *node) Send(dest uint64, msg *msgs.Msg) {
 	defer n.unreachableLock.RUnlock()
 
 	msgBytes := protoutil.MarshalOrPanic(msg)
-	err := n.rpc.SendConsensus(dest, &orderer.ConsensusRequest{Channel: n.chainID, Payload: msgBytes})
+	err = n.rpc.SendConsensus(dest, &orderer.ConsensusRequest{Channel: n.chainID, Payload: msgBytes})
 	if err != nil {
 		n.logSendFailure(dest, err)
 	} else if _, ok := n.unreachable[dest]; ok {
