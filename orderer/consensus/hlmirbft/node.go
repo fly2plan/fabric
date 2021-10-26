@@ -164,7 +164,6 @@ func (n *node) start(fresh, join bool) {
 				NetworkState:      n.chain.opts.BlockMetadata.NetworkState,
 			})
 		}
-		n.logger.Infof("fresh: \nseqNo %+v\nnetworkState %+v\ninitialCheckpoint %x\nepochConfig %+v", n.checkpointSeqNo, n.networkState, sha256.Sum256(initialCheckpoint), n.epochConfig)
 		// TODO(harrymknight) Tick interval is fixed. Perhaps introduce TickInterval field in configuration options
 		go func() {
 			err := n.ProcessAsNewNode(
