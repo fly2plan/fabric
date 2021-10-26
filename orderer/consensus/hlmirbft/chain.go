@@ -40,7 +40,7 @@ const (
 	BYTE = 1 << (10 * iota)
 	KILOBYTE
 	MEGABYTE
-	IGABYTE
+	GIGABYTE
 	TERABYTE
 )
 
