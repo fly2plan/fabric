@@ -1269,7 +1269,6 @@ func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clie
 		}
 		req = reconfig.req
 		newNetworkConfig := pr[1].GetNewConfig()
-		c.logger.Infof("<===== %+v %+v =====>", newNetworkConfig, networkConfig)
 		newNetworkConfigisNetworkConfig = true
 		if len(newNetworkConfig.Nodes) == len(networkConfig.Nodes) {
 			for i := range newNetworkConfig.Nodes {
