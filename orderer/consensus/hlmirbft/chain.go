@@ -895,9 +895,11 @@ func (c *Chain) isConfig(env *common.Envelope) bool {
 
 func (c *Chain) configureComm() error {
 	// Reset unreachable map when communication is reconfigured
+	c.switchC <- struct{}{}
 	c.Node.unreachableLock.Lock()
 	c.Node.unreachable = make(map[uint64]struct{})
 	c.Node.unreachableLock.Unlock()
+	c.switchC <- struct{}{}
 
 	nodes, err := c.remotePeers()
 	if err != nil {

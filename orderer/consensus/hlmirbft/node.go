@@ -225,6 +225,10 @@ func InitialNetworkState(nodes []uint64, numberOfBuckets int32, checkpointInterv
 }
 
 func (n *node) Send(dest uint64, msg *msgs.Msg) {
+	err := n.chain.WaitReady()
+	if err != nil {
+		n.logger.Panicf("Error: %x", err)
+	}
 	n.unreachableLock.RLock()
 	defer n.unreachableLock.RUnlock()
 
