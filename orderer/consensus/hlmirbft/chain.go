@@ -663,11 +663,11 @@ func (c *Chain) getNewNetworkStateConfig(configMetadata *hlmirbft.ConfigMetadata
 }
 
 //JIRA FLY2-103 : Identify the type of config update and return the config change
-func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, currentConsenters, updatedConsenters []*hlmirbft.Consenter) ([]*msgs.Reconfiguration, error) {
-	var updatedConfig, newNetworkState *msgs.Reconfiguration
-	var newNetStateConfig *msgs.NetworkState_Config
-	configChangeType := len(currentConsenters) - len(updatedConsenters)
+func (c *Chain) getUpdatedConfigChange(configMetadata *hlmirbft.ConfigMetadata, currentConsenters []*hlmirbft.Consenter, updatedConsenters []*hlmirbft.Consenter) ([]*msgs.Reconfiguration, error) {
+	configChangeType := len(updatedConsenters) - len(currentConsenters)
 	consenterList := c.opts.BlockMetadata.ConsenterIds
+	updatedConfig := &msgs.Reconfiguration{}
+	newNetworkState := &msgs.Reconfiguration{}
 	if configChangeType > 0 {
 		newNodeId := uint64(len(currentConsenters) + 1)
 		updatedConfig.Type = &msgs.Reconfiguration_NewClient_{NewClient: &msgs.Reconfiguration_NewClient{
@@ -679,7 +679,7 @@ func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, 
 		removedConsenter := CompareConsenterList(currentConsenters, updatedConsenters)
 		removedConsenterID, ok := GetConsenterId(c.opts.Consenters, removedConsenter)
 		if !ok {
-			return nil, errors.Errorf("Cannot Retrieve Consenter ID")
+			return nil, errors.Errorf("Cannot retrieve consenter ID")
 		}
 		updatedConfig.Type = &msgs.Reconfiguration_RemoveClient{
 			RemoveClient: removedConsenterID,
@@ -687,7 +687,7 @@ func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, 
 		consenterList = removeNodeID(consenterList, removedConsenterID)
 	}
 
-	newNetStateConfig = c.getNewNetworkStateConfig(configMetaData, consenterList)
+	newNetStateConfig := c.getNewNetworkStateConfig(configMetadata, consenterList)
 	newNetworkState.Type = &msgs.Reconfiguration_NewConfig{
 		NewConfig: newNetStateConfig,
 	}
@@ -698,7 +698,7 @@ func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, 
 
 //JIRA FLY2-103 : Process the config Metadata
 func (c *Chain) processReconfiguration(configMetaData *hlmirbft.ConfigMetadata) ([]*msgs.Reconfiguration, error) {
-	var currentConsenters []*hlmirbft.Consenter
+	currentConsenters := make([]*hlmirbft.Consenter, 0)
 	for _, value := range c.opts.Consenters {
 		currentConsenters = append(currentConsenters, value)
 	}
@@ -953,15 +953,44 @@ func pemToDER(pemBytes []byte, id uint64, certType string, logger *flogging.Fabr
 func (c *Chain) writeConfigBlock(block *common.Block) {
 	c.mirbftMetadataLock.Lock()
 	c.appliedIndex++
-	c.opts.BlockMetadata.MirbftIndex = c.appliedIndex
-	metaData, err := protoutil.Marshal(c.opts.BlockMetadata)
-	if err != nil {
-		c.logger.Errorf("Error Occurred : ", err)
-	}
-	c.support.WriteConfigBlock(block, metaData)
-	c.lastBlock = block
 	c.mirbftMetadataLock.Unlock()
 
+	configMembership := c.detectConfChange(block)
+
+	if configMembership != nil && configMembership.Changed() {
+		c.logger.Infof("Config block [%d] changes consenter set, communication should be reconfigured", block.Header.Number)
+
+		c.mirbftMetadataLock.Lock()
+		c.opts.BlockMetadata = configMembership.NewBlockMetadata
+		c.opts.Consenters = configMembership.NewConsenters
+		c.mirbftMetadataLock.Unlock()
+
+		if err := c.configureComm(); err != nil {
+			c.logger.Panicf("Failed to configure communication: %s", err)
+		}
+	}
+
+	c.mirbftMetadataLock.Lock()
+	c.opts.BlockMetadata.MirbftIndex = c.appliedIndex
+	c.opts.BlockMetadata.LastCheckpointSeqNo = c.Node.checkpointSeqNo
+	networkStateBytes, err := proto.Marshal(c.Node.networkState)
+	if err != nil {
+		c.logger.Errorf("Error occurred : ", err)
+	}
+	c.opts.BlockMetadata.NetworkState = networkStateBytes
+	epochConfigBytes, err := proto.Marshal(c.Node.epochConfig)
+	if err != nil {
+		c.logger.Errorf("Error occurred : ", err)
+	}
+	c.opts.BlockMetadata.EpochConfig = epochConfigBytes
+	metadata, err := protoutil.Marshal(c.opts.BlockMetadata)
+	if err != nil {
+		c.logger.Errorf("Error occurred : ", err)
+	}
+	c.support.WriteConfigBlock(block, metadata)
+	c.mirbftMetadataLock.Unlock()
+
+	c.lastBlock = block
 }
 
 // getInFlightConfChange returns ConfChange in-flight if any.
@@ -1227,49 +1256,85 @@ func (c *Chain) revalidateConfigMsg(msg *orderer.SubmitRequest) (*common.Envelop
 	return msg.Payload, nil
 }
 
-//JIRA FLY2-66 proposed changes:Implemented the Snap Function
-func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*msgs.NetworkState_Client) ([]byte, []*msgs.Reconfiguration, error) {
+func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clientsState []*msgs.NetworkState_Client, epochConfig *msgs.EpochConfig) ([]byte, []*msgs.Reconfiguration, error) {
+	req := &orderer.SubmitRequest{}
 	pr := make([]*msgs.Reconfiguration, 0)
 	//JIRA - 106 check reconfiguration length
+	newNetworkConfigisNetworkConfig := false
 	if len(c.pendingConfigs) != 0 {
 		reconfig := c.pendingConfigs[0]
 		for _, config := range reconfig.reconfigurations {
 			pr = append(pr,
 				proto.Clone(config).(*msgs.Reconfiguration))
 		}
-		req := reconfig.req
+		req = reconfig.req
 		newNetworkConfig := pr[1].GetNewConfig()
-		//JIRA FLY2-106 wait till pending batch list is empty
-		c.waitForPendingBatchCommits()
-		if reflect.DeepEqual(newNetworkConfig, networkConfig) {
-			env := req.Payload
-			env, err := c.revalidateConfigMsg(req)
-			if err != nil {
-				return nil, nil, err
+		c.logger.Infof("<===== %+v %+v =====>", newNetworkConfig, networkConfig)
+		newNetworkConfigisNetworkConfig = true
+		if len(newNetworkConfig.Nodes) == len(networkConfig.Nodes) {
+			for i := range newNetworkConfig.Nodes {
+				if newNetworkConfig.Nodes[i] != networkConfig.Nodes[i] {
+					newNetworkConfigisNetworkConfig = false
+				}
 			}
-			//JIRA FLY2-106 get config envelope
-			block := c.CreateBlock([]*common.Envelope{env})
-			c.writeConfigBlock(block)
-			c.removeConfigEnv()
-			//JIRA FLY2-106 remove reconfiguration
-			defer func() {
-				c.pendingConfigs = PopReconfiguration(c.pendingConfigs)
-			}()
+		} else {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.CheckpointInterval != networkConfig.CheckpointInterval {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.NumberOfBuckets != networkConfig.NumberOfBuckets {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.MaxEpochLength != networkConfig.MaxEpochLength {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.F != networkConfig.F {
+			newNetworkConfigisNetworkConfig = false
 		}
 	} else {
 		pr = nil
 	}
 
-	c.Node.CheckpointSeqNo = c.lastBlock.Header.Number
-	networkStateBytes, err := proto.Marshal(&msgs.NetworkState{
+	networkState := &msgs.NetworkState{
 		Config:                  networkConfig,
 		Clients:                 clientsState,
 		PendingReconfigurations: pr,
-	})
+	}
+
+	c.Node.epochConfig = epochConfig
+	c.Node.networkState = networkState
+	c.Node.checkpointSeqNo = seqNo
+
+	if newNetworkConfigisNetworkConfig {
+		networkState.PendingReconfigurations = nil
+		newNetworkConfig := pr[1].GetNewConfig()
+		for i := range newNetworkConfig.Nodes {
+			if newNetworkConfig.Loyalties[i] != 0 {
+				networkConfig.Loyalties[i] = newNetworkConfig.Loyalties[i]
+			}
+			if newNetworkConfig.Timeouts[i] != 0 {
+				networkConfig.Timeouts[i] = newNetworkConfig.Timeouts[i]
+			}
+		}
+		env := req.Payload
+		env, err := c.revalidateConfigMsg(req)
+		if err != nil {
+			return nil, nil, err
+		}
+		//JIRA FLY2-106 get config envelope
+		block := c.CreateBlock([]*common.Envelope{env})
+		c.writeConfigBlock(block)
+		c.removeConfigEnv()
+		//JIRA FLY2-106 remove reconfiguration
+		defer func() {
+			c.pendingConfigs = PopReconfiguration(c.pendingConfigs)
+		}()
+	}
+
+	networkStateBytes, err := proto.Marshal(networkState)
 	if err != nil {
-
 		return nil, nil, errors.WithMessage(err, "Could not marshal network state")
-
 	}
 	//JIRA FLY2-106 Generating last block bytes to be added to snap data
 	lastBlockBytes, err := proto.Marshal(&common.Block{
@@ -1292,7 +1357,7 @@ func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*ms
 		return nil, nil, errors.WithMessage(err, "Could not marshal Snap Data")
 
 	}
-	err = c.Node.PersistSnapshot(c.Node.CheckpointSeqNo, snapDataBytes)
+	err = c.Node.PersistSnapshot(c.Node.checkpointSeqNo, snapDataBytes)
 	if err != nil {
 		c.logger.Panicf("Error while snap persist : %s", err)
 	}
