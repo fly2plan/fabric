@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"crypto"
 	"fmt"
+	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-protos-go/common"
 	"io"
 	"io/ioutil"
 	"os"
@@ -21,10 +23,10 @@ import (
 
 	"github.com/fly2plan/fabric-protos-go/orderer/hlmirbft"
 	"github.com/fly2plan/mirbft"
-	"github.com/hyperledger-labs/mirbft/pkg/eventlog"
-	"github.com/hyperledger-labs/mirbft/pkg/pb/msgs"
-	"github.com/hyperledger-labs/mirbft/pkg/reqstore"
-	"github.com/hyperledger-labs/mirbft/pkg/simplewal"
+	"github.com/fly2plan/mirbft/pkg/eventlog"
+	"github.com/fly2plan/mirbft/pkg/pb/msgs"
+	"github.com/fly2plan/mirbft/pkg/reqstore"
+	"github.com/fly2plan/mirbft/pkg/simplewal"
 	"github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/protoutil"
 
@@ -40,11 +42,18 @@ type node struct {
 	unreachableLock sync.RWMutex
 	unreachable     map[uint64]struct{}
 
-	config      *mirbft.Config
+	config             *mirbft.Config
+	numberOfBuckets    int32
+	checkpointInterval int32
+	maxEpochLength     uint64
+	nodeStatuses       []*hlmirbft.NodeStatus
+
 	WALDir      string
 	ReqStoreDir string
 
-	CheckpointSeqNo uint64 //JIRA FLY2-66
+	checkpointSeqNo uint64 //JIRA FLY2-66
+	networkState    *msgs.NetworkState
+	epochConfig     *msgs.EpochConfig
 
 	LastCommittedSeqNo uint64 //JIRA FLY2-48 - proposed changes: To track the last committed sequence number
 
@@ -112,12 +121,60 @@ func (n *node) start(fresh, join bool) {
 		n.Node = *node
 	}
 
-	initialNetworkState := InitialNetworkState(len(n.chain.opts.Consenters))
-	//FLY2-167 - Restructured the if condition
 	if fresh {
+		n.checkpointSeqNo = n.chain.opts.BlockMetadata.LastCheckpointSeqNo
+		initialCheckpoint := []byte("first")
+		atGenesis := n.chain.support.Height() == 1
+		if atGenesis {
+			n.networkState = InitialNetworkState(
+				n.metadata.ConsenterIds,
+				n.numberOfBuckets,
+				n.checkpointInterval,
+				n.maxEpochLength,
+				n.nodeStatuses,
+			)
+			n.epochConfig = &msgs.EpochConfig{
+				Number:  0,
+				Leaders: n.networkState.Config.Nodes,
+			}
+		} else {
+			networkState := &msgs.NetworkState{}
+			err := proto.Unmarshal(n.chain.opts.BlockMetadata.NetworkState, networkState)
+			if err != nil {
+				n.logger.Error(err, "Failed to unmarshal network state")
+			}
+			n.networkState = networkState
+			previousEpochConfig := &msgs.EpochConfig{}
+			err = proto.Unmarshal(n.chain.opts.BlockMetadata.EpochConfig, previousEpochConfig)
+			if err != nil {
+				n.logger.Error(err, "Failed to unmarshal epoch configuration")
+			}
+			n.epochConfig = previousEpochConfig
+
+			lastBlockBytes, err := proto.Marshal(&common.Block{
+				Header: n.chain.lastBlock.Header,
+				Data:   n.chain.lastBlock.Data,
+			})
+			if err != nil {
+				n.logger.Error(err, "Could not marshal block")
+			}
+
+			initialCheckpoint, err = proto.Marshal(&hlmirbft.SnapData{
+				LastCommitedBlock: lastBlockBytes,
+				NetworkState:      n.chain.opts.BlockMetadata.NetworkState,
+			})
+		}
+		n.logger.Infof("fresh: \nseqNo %+v\nnetworkState %+v\ninitialCheckpoint %x\nepochConfig %+v", n.checkpointSeqNo, n.networkState, sha256.Sum256(initialCheckpoint), n.epochConfig)
 		// TODO(harrymknight) Tick interval is fixed. Perhaps introduce TickInterval field in configuration options
 		go func() {
-			err := n.ProcessAsNewNode(n.chain.doneC, n.clock.NewTicker(2*time.Second).C(), initialNetworkState, []byte("first"))
+			err := n.ProcessAsNewNode(
+				n.chain.doneC,
+				n.clock.NewTicker(500*time.Millisecond).C(),
+				n.checkpointSeqNo,
+				n.networkState,
+				initialCheckpoint,
+				n.epochConfig,
+			)
 			if err != nil {
 				n.logger.Error(err, "Failed to start mirbft node")
 			}
@@ -125,7 +182,7 @@ func (n *node) start(fresh, join bool) {
 	} else {
 		n.logger.Info("Restarting mirbft node")
 		go func() {
-			err := n.RestartProcessing(n.chain.doneC, n.clock.NewTicker(2*time.Second).C())
+			err := n.RestartProcessing(n.chain.doneC, n.clock.NewTicker(500*time.Millisecond).C())
 			if err != nil {
 				n.logger.Error(err, "Failed to restart mirbft node")
 			}
@@ -133,23 +190,22 @@ func (n *node) start(fresh, join bool) {
 	}
 }
 
-func InitialNetworkState(nodeCount int) *msgs.NetworkState {
-	nodes := make([]uint64, nodeCount)
-	for i := 1; i < nodeCount+1; i++ {
-		nodes[i-1] = uint64(i)
-	}
+func InitialNetworkState(nodes []uint64, numberOfBuckets int32, checkpointInterval int32, maxEpochLength uint64, nodeStatuses []*hlmirbft.NodeStatus) *msgs.NetworkState {
+	loyalties := make([]int64, len(nodeStatuses))
+	timeouts := make([]uint64, len(nodeStatuses))
 
-	numberOfBuckets := int32(nodeCount)
-	checkpointInterval := numberOfBuckets * 5
-	maxEpochLength := checkpointInterval * 10
+	for i, nodeStatus := range nodeStatuses {
+		loyalties[i] = nodeStatus.Loyalty
+		timeouts[i] = nodeStatus.Timeout
+	}
 
 	// TODO(harrymknight) The width of a client window is fixed.
 	//  Could optimise by varying according to the checkpoint interval and batch size
-	clients := make([]*msgs.NetworkState_Client, nodeCount)
+	clients := make([]*msgs.NetworkState_Client, len(nodes))
 	for i := range clients {
 		clients[i] = &msgs.NetworkState_Client{
-			Id:           uint64(i),
-			Width:        100,
+			Id:           uint64(i + 1),
+			Width:        10000,
 			LowWatermark: 0,
 		}
 	}
@@ -157,10 +213,12 @@ func InitialNetworkState(nodeCount int) *msgs.NetworkState {
 	return &msgs.NetworkState{
 		Config: &msgs.NetworkState_Config{
 			Nodes:              nodes,
-			F:                  int32((nodeCount - 1) / 3),
+			F:                  int32((len(nodes) - 1) / 3),
 			NumberOfBuckets:    numberOfBuckets,
 			CheckpointInterval: checkpointInterval,
-			MaxEpochLength:     uint64(maxEpochLength),
+			MaxEpochLength:     maxEpochLength,
+			Loyalties:          loyalties,
+			Timeouts:           timeouts,
 		},
 		Clients: clients,
 	}

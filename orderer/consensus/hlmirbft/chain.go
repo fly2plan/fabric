@@ -9,9 +9,8 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
-	"github.com/hyperledger-labs/mirbft/pkg/simplewal"
+	"github.com/fly2plan/mirbft/pkg/simplewal"
 	"github.com/hyperledger/fabric/common/configtx"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,8 +20,8 @@ import (
 	"code.cloudfoundry.org/clock"
 	"github.com/fly2plan/fabric-protos-go/orderer/hlmirbft"
 	"github.com/fly2plan/mirbft"
+	"github.com/fly2plan/mirbft/pkg/pb/msgs"
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger-labs/mirbft/pkg/pb/msgs"
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/bccsp"
@@ -121,7 +120,11 @@ type Options struct {
 	SuspectTicks         uint32
 	NewEpochTimeoutTicks uint32
 	BufferSize           uint32
+	NumberOfBuckets      int32
+	CheckpointInterval   int32
+	MaxEpochLength       uint64
 	MaxSizePerMsg        uint64
+	NodeStatuses         []*hlmirbft.NodeStatus
 
 	// BlockMetdata and Consenters should only be modified while under lock
 	// of raftMetadataLock
@@ -157,6 +160,8 @@ type Chain struct {
 	lastKnownLeader uint64
 	ActiveNodes     atomic.Value
 
+	switchC  chan struct{}
+	pauseC   chan struct{}
 	submitC  chan *submit
 	applyC   chan apply
 	observeC chan<- raft.SoftState // Notifies external observer on leader change (passed in optionally as an argument for tests)
@@ -263,6 +268,8 @@ func NewChain(
 		rpc:               rpc,
 		channelID:         support.ChannelID(),
 		MirBFTID:          opts.MirBFTID,
+		switchC:           make(chan struct{}, 2),
+		pauseC:            make(chan struct{}),
 		submitC:           make(chan *submit),
 		applyC:            make(chan apply),
 		haltC:             make(chan struct{}),
@@ -322,16 +329,20 @@ func NewChain(
 	c.ActiveNodes.Store([]uint64{})
 
 	c.Node = &node{
-		chainID:     c.channelID,
-		chain:       c,
-		logger:      c.logger,
-		metrics:     c.Metrics,
-		rpc:         disseminator,
-		config:      config,
-		WALDir:      opts.WALDir,
-		ReqStoreDir: opts.ReqStoreDir,
-		clock:       c.clock,
-		metadata:    c.opts.BlockMetadata,
+		chainID:            c.channelID,
+		chain:              c,
+		logger:             c.logger,
+		metrics:            c.Metrics,
+		rpc:                disseminator,
+		config:             config,
+		numberOfBuckets:    opts.NumberOfBuckets,
+		checkpointInterval: opts.CheckpointInterval,
+		maxEpochLength:     opts.MaxEpochLength,
+		nodeStatuses:       opts.NodeStatuses,
+		WALDir:             opts.WALDir,
+		ReqStoreDir:        opts.ReqStoreDir,
+		clock:              c.clock,
+		metadata:           c.opts.BlockMetadata,
 	}
 
 	return c, nil
@@ -379,6 +390,12 @@ func (c *Chain) Configure(env *common.Envelope, configSeq uint64) error {
 func (c *Chain) WaitReady() error {
 	if err := c.isRunning(); err != nil {
 		return err
+	}
+
+	select {
+	case c.pauseC <- struct{}{}:
+	case <-c.doneC:
+		return errors.Errorf("chain is stopped")
 	}
 
 	return nil
@@ -548,7 +565,23 @@ func isCandidate(state raft.StateType) bool {
 }
 
 func (c *Chain) run() {
+	pauseC := c.pauseC
+	switchC := c.switchC
+	// On by default
+	state := true
 
+	for {
+		select {
+		case <-pauseC:
+		case <-switchC:
+			state = !state
+			if state {
+				pauseC = c.pauseC
+			} else {
+				pauseC = nil
+			}
+		}
+	}
 }
 
 func (c *Chain) writeBlock(block *common.Block) {
@@ -593,16 +626,39 @@ func (c *Chain) getConfigMetadata(msgPayload []byte) (*hlmirbft.ConfigMetadata, 
 }
 
 //JIRA FLY2-103 : Generate new network state config
-func (c *Chain) getNewNetworkStateConfig(configMetaData *hlmirbft.ConfigMetadata, newNodeList []uint64) *msgs.NetworkState_Config {
-	nodes := newNodeList
-	nodeCount := len(nodes)
+func (c *Chain) getNewNetworkStateConfig(configMetadata *hlmirbft.ConfigMetadata, newNodeList []uint64) *msgs.NetworkState_Config {
+	loyalties := make([]int64, len(configMetadata.Consenters))
+	timeouts := make([]uint64, len(configMetadata.Consenters))
+
+	if configMetadata.Options.MaxEpochLength == 0 {
+		configMetadata.Options.MaxEpochLength = 200
+	}
+	if configMetadata.Options.CheckpointInterval == 0 {
+		configMetadata.Options.CheckpointInterval = 20
+	}
+	if configMetadata.Options.NumberOfBuckets == 0 {
+		configMetadata.Options.NumberOfBuckets = int32(len(newNodeList))
+	}
+	if configMetadata.Options.NodeStatuses == nil {
+		for i := range configMetadata.Consenters {
+			loyalties[i] = 0
+			timeouts[i] = 0
+		}
+	} else {
+		for i := range configMetadata.Consenters {
+			loyalties[i] = configMetadata.Options.NodeStatuses[i].Loyalty
+			timeouts[i] = configMetadata.Options.NodeStatuses[i].Timeout
+		}
+	}
 
 	return &msgs.NetworkState_Config{
-		Nodes:              nodes,
-		MaxEpochLength:     configMetaData.Options.MaxEpochLength,
-		CheckpointInterval: configMetaData.Options.CheckpointInterval,
-		F:                  int32((nodeCount - 1) / 3),
-		NumberOfBuckets:    configMetaData.Options.NumberOfBuckets,
+		Nodes:              newNodeList,
+		MaxEpochLength:     configMetadata.Options.MaxEpochLength,
+		CheckpointInterval: configMetadata.Options.CheckpointInterval,
+		F:                  int32((len(newNodeList) - 1) / 3),
+		NumberOfBuckets:    configMetadata.Options.NumberOfBuckets,
+		Loyalties:          loyalties,
+		Timeouts:           timeouts,
 	}
 }
 
