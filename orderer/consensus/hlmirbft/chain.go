@@ -9,9 +9,8 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
-	"github.com/hyperledger-labs/mirbft/pkg/simplewal"
+	"github.com/fly2plan/mirbft/pkg/simplewal"
 	"github.com/hyperledger/fabric/common/configtx"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,8 +20,8 @@ import (
 	"code.cloudfoundry.org/clock"
 	"github.com/fly2plan/fabric-protos-go/orderer/hlmirbft"
 	"github.com/fly2plan/mirbft"
+	"github.com/fly2plan/mirbft/pkg/pb/msgs"
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger-labs/mirbft/pkg/pb/msgs"
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/bccsp"
@@ -41,7 +40,7 @@ const (
 	BYTE = 1 << (10 * iota)
 	KILOBYTE
 	MEGABYTE
-	IGABYTE
+	GIGABYTE
 	TERABYTE
 )
 
@@ -121,7 +120,11 @@ type Options struct {
 	SuspectTicks         uint32
 	NewEpochTimeoutTicks uint32
 	BufferSize           uint32
+	NumberOfBuckets      int32
+	CheckpointInterval   int32
+	MaxEpochLength       uint64
 	MaxSizePerMsg        uint64
+	NodeStatuses         []*hlmirbft.NodeStatus
 
 	// BlockMetdata and Consenters should only be modified while under lock
 	// of raftMetadataLock
@@ -157,6 +160,8 @@ type Chain struct {
 	lastKnownLeader uint64
 	ActiveNodes     atomic.Value
 
+	switchC  chan struct{}
+	pauseC   chan struct{}
 	submitC  chan *submit
 	applyC   chan apply
 	observeC chan<- raft.SoftState // Notifies external observer on leader change (passed in optionally as an argument for tests)
@@ -263,6 +268,8 @@ func NewChain(
 		rpc:               rpc,
 		channelID:         support.ChannelID(),
 		MirBFTID:          opts.MirBFTID,
+		switchC:           make(chan struct{}, 2),
+		pauseC:            make(chan struct{}),
 		submitC:           make(chan *submit),
 		applyC:            make(chan apply),
 		haltC:             make(chan struct{}),
@@ -322,16 +329,20 @@ func NewChain(
 	c.ActiveNodes.Store([]uint64{})
 
 	c.Node = &node{
-		chainID:     c.channelID,
-		chain:       c,
-		logger:      c.logger,
-		metrics:     c.Metrics,
-		rpc:         disseminator,
-		config:      config,
-		WALDir:      opts.WALDir,
-		ReqStoreDir: opts.ReqStoreDir,
-		clock:       c.clock,
-		metadata:    c.opts.BlockMetadata,
+		chainID:            c.channelID,
+		chain:              c,
+		logger:             c.logger,
+		metrics:            c.Metrics,
+		rpc:                disseminator,
+		config:             config,
+		numberOfBuckets:    opts.NumberOfBuckets,
+		checkpointInterval: opts.CheckpointInterval,
+		maxEpochLength:     opts.MaxEpochLength,
+		nodeStatuses:       opts.NodeStatuses,
+		WALDir:             opts.WALDir,
+		ReqStoreDir:        opts.ReqStoreDir,
+		clock:              c.clock,
+		metadata:           c.opts.BlockMetadata,
 	}
 
 	return c, nil
@@ -379,6 +390,12 @@ func (c *Chain) Configure(env *common.Envelope, configSeq uint64) error {
 func (c *Chain) WaitReady() error {
 	if err := c.isRunning(); err != nil {
 		return err
+	}
+
+	select {
+	case c.pauseC <- struct{}{}:
+	case <-c.doneC:
+		return errors.Errorf("chain is stopped")
 	}
 
 	return nil
@@ -548,7 +565,23 @@ func isCandidate(state raft.StateType) bool {
 }
 
 func (c *Chain) run() {
+	pauseC := c.pauseC
+	switchC := c.switchC
+	// On by default
+	state := true
 
+	for {
+		select {
+		case <-pauseC:
+		case <-switchC:
+			state = !state
+			if state {
+				pauseC = c.pauseC
+			} else {
+				pauseC = nil
+			}
+		}
+	}
 }
 
 func (c *Chain) writeBlock(block *common.Block) {
@@ -593,37 +626,60 @@ func (c *Chain) getConfigMetadata(msgPayload []byte) (*hlmirbft.ConfigMetadata, 
 }
 
 //JIRA FLY2-103 : Generate new network state config
-func (c *Chain) getNewNetworkStateConfig(configMetaData *hlmirbft.ConfigMetadata, newNodeList []uint64) *msgs.NetworkState_Config {
-	nodes := newNodeList
-	nodeCount := len(nodes)
+func (c *Chain) getNewNetworkStateConfig(configMetadata *hlmirbft.ConfigMetadata, newNodeList []uint64) *msgs.NetworkState_Config {
+	loyalties := make([]int64, len(configMetadata.Consenters))
+	timeouts := make([]uint64, len(configMetadata.Consenters))
+
+	if configMetadata.Options.MaxEpochLength == 0 {
+		configMetadata.Options.MaxEpochLength = 200
+	}
+	if configMetadata.Options.CheckpointInterval == 0 {
+		configMetadata.Options.CheckpointInterval = 20
+	}
+	if configMetadata.Options.NumberOfBuckets == 0 {
+		configMetadata.Options.NumberOfBuckets = int32(len(newNodeList))
+	}
+	if configMetadata.Options.NodeStatuses == nil {
+		for i := range configMetadata.Consenters {
+			loyalties[i] = 0
+			timeouts[i] = 0
+		}
+	} else {
+		for i := range configMetadata.Consenters {
+			loyalties[i] = configMetadata.Options.NodeStatuses[i].Loyalty
+			timeouts[i] = configMetadata.Options.NodeStatuses[i].Timeout
+		}
+	}
 
 	return &msgs.NetworkState_Config{
-		Nodes:              nodes,
-		MaxEpochLength:     configMetaData.Options.MaxEpochLength,
-		CheckpointInterval: configMetaData.Options.CheckpointInterval,
-		F:                  int32((nodeCount - 1) / 3),
-		NumberOfBuckets:    configMetaData.Options.NumberOfBuckets,
+		Nodes:              newNodeList,
+		MaxEpochLength:     configMetadata.Options.MaxEpochLength,
+		CheckpointInterval: configMetadata.Options.CheckpointInterval,
+		F:                  int32((len(newNodeList) - 1) / 3),
+		NumberOfBuckets:    configMetadata.Options.NumberOfBuckets,
+		Loyalties:          loyalties,
+		Timeouts:           timeouts,
 	}
 }
 
 //JIRA FLY2-103 : Identify the type of config update and return the config change
-func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, currentConsenters, updatedConsenters []*hlmirbft.Consenter) ([]*msgs.Reconfiguration, error) {
-	var updatedConfig, newNetworkState *msgs.Reconfiguration
-	var newNetStateConfig *msgs.NetworkState_Config
-	configChangeType := len(currentConsenters) - len(updatedConsenters)
+func (c *Chain) getUpdatedConfigChange(configMetadata *hlmirbft.ConfigMetadata, currentConsenters []*hlmirbft.Consenter, updatedConsenters []*hlmirbft.Consenter) ([]*msgs.Reconfiguration, error) {
+	configChangeType := len(updatedConsenters) - len(currentConsenters)
 	consenterList := c.opts.BlockMetadata.ConsenterIds
+	updatedConfig := &msgs.Reconfiguration{}
+	newNetworkState := &msgs.Reconfiguration{}
 	if configChangeType > 0 {
 		newNodeId := uint64(len(currentConsenters) + 1)
 		updatedConfig.Type = &msgs.Reconfiguration_NewClient_{NewClient: &msgs.Reconfiguration_NewClient{
 			Id:    newNodeId,
-			Width: 100,
+			Width: 10000,
 		}}
 		consenterList = append(consenterList, newNodeId)
 	} else if configChangeType < 0 {
 		removedConsenter := CompareConsenterList(currentConsenters, updatedConsenters)
 		removedConsenterID, ok := GetConsenterId(c.opts.Consenters, removedConsenter)
 		if !ok {
-			return nil, errors.Errorf("Cannot Retrieve Consenter ID")
+			return nil, errors.Errorf("Cannot retrieve consenter ID")
 		}
 		updatedConfig.Type = &msgs.Reconfiguration_RemoveClient{
 			RemoveClient: removedConsenterID,
@@ -631,7 +687,7 @@ func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, 
 		consenterList = removeNodeID(consenterList, removedConsenterID)
 	}
 
-	newNetStateConfig = c.getNewNetworkStateConfig(configMetaData, consenterList)
+	newNetStateConfig := c.getNewNetworkStateConfig(configMetadata, consenterList)
 	newNetworkState.Type = &msgs.Reconfiguration_NewConfig{
 		NewConfig: newNetStateConfig,
 	}
@@ -642,7 +698,7 @@ func (c *Chain) getUpdatedConfigChange(configMetaData *hlmirbft.ConfigMetadata, 
 
 //JIRA FLY2-103 : Process the config Metadata
 func (c *Chain) processReconfiguration(configMetaData *hlmirbft.ConfigMetadata) ([]*msgs.Reconfiguration, error) {
-	var currentConsenters []*hlmirbft.Consenter
+	currentConsenters := make([]*hlmirbft.Consenter, 0)
 	for _, value := range c.opts.Consenters {
 		currentConsenters = append(currentConsenters, value)
 	}
@@ -839,9 +895,11 @@ func (c *Chain) isConfig(env *common.Envelope) bool {
 
 func (c *Chain) configureComm() error {
 	// Reset unreachable map when communication is reconfigured
+	c.switchC <- struct{}{}
 	c.Node.unreachableLock.Lock()
 	c.Node.unreachable = make(map[uint64]struct{})
 	c.Node.unreachableLock.Unlock()
+	c.switchC <- struct{}{}
 
 	nodes, err := c.remotePeers()
 	if err != nil {
@@ -895,15 +953,44 @@ func pemToDER(pemBytes []byte, id uint64, certType string, logger *flogging.Fabr
 func (c *Chain) writeConfigBlock(block *common.Block) {
 	c.mirbftMetadataLock.Lock()
 	c.appliedIndex++
-	c.opts.BlockMetadata.MirbftIndex = c.appliedIndex
-	metaData, err := protoutil.Marshal(c.opts.BlockMetadata)
-	if err != nil {
-		c.logger.Errorf("Error Occurred : ", err)
-	}
-	c.support.WriteConfigBlock(block, metaData)
-	c.lastBlock = block
 	c.mirbftMetadataLock.Unlock()
 
+	configMembership := c.detectConfChange(block)
+
+	if configMembership != nil && configMembership.Changed() {
+		c.logger.Infof("Config block [%d] changes consenter set, communication should be reconfigured", block.Header.Number)
+
+		c.mirbftMetadataLock.Lock()
+		c.opts.BlockMetadata = configMembership.NewBlockMetadata
+		c.opts.Consenters = configMembership.NewConsenters
+		c.mirbftMetadataLock.Unlock()
+
+		if err := c.configureComm(); err != nil {
+			c.logger.Panicf("Failed to configure communication: %s", err)
+		}
+	}
+
+	c.mirbftMetadataLock.Lock()
+	c.opts.BlockMetadata.MirbftIndex = c.appliedIndex
+	c.opts.BlockMetadata.LastCheckpointSeqNo = c.Node.checkpointSeqNo
+	networkStateBytes, err := proto.Marshal(c.Node.networkState)
+	if err != nil {
+		c.logger.Errorf("Error occurred : ", err)
+	}
+	c.opts.BlockMetadata.NetworkState = networkStateBytes
+	epochConfigBytes, err := proto.Marshal(c.Node.epochConfig)
+	if err != nil {
+		c.logger.Errorf("Error occurred : ", err)
+	}
+	c.opts.BlockMetadata.EpochConfig = epochConfigBytes
+	metadata, err := protoutil.Marshal(c.opts.BlockMetadata)
+	if err != nil {
+		c.logger.Errorf("Error occurred : ", err)
+	}
+	c.support.WriteConfigBlock(block, metadata)
+	c.mirbftMetadataLock.Unlock()
+
+	c.lastBlock = block
 }
 
 // getInFlightConfChange returns ConfChange in-flight if any.
@@ -1169,49 +1256,84 @@ func (c *Chain) revalidateConfigMsg(msg *orderer.SubmitRequest) (*common.Envelop
 	return msg.Payload, nil
 }
 
-//JIRA FLY2-66 proposed changes:Implemented the Snap Function
-func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*msgs.NetworkState_Client) ([]byte, []*msgs.Reconfiguration, error) {
+func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clientsState []*msgs.NetworkState_Client, epochConfig *msgs.EpochConfig) ([]byte, []*msgs.Reconfiguration, error) {
+	req := &orderer.SubmitRequest{}
 	pr := make([]*msgs.Reconfiguration, 0)
 	//JIRA - 106 check reconfiguration length
+	newNetworkConfigisNetworkConfig := false
 	if len(c.pendingConfigs) != 0 {
 		reconfig := c.pendingConfigs[0]
 		for _, config := range reconfig.reconfigurations {
 			pr = append(pr,
 				proto.Clone(config).(*msgs.Reconfiguration))
 		}
-		req := reconfig.req
+		req = reconfig.req
 		newNetworkConfig := pr[1].GetNewConfig()
-		//JIRA FLY2-106 wait till pending batch list is empty
-		c.waitForPendingBatchCommits()
-		if reflect.DeepEqual(newNetworkConfig, networkConfig) {
-			env := req.Payload
-			env, err := c.revalidateConfigMsg(req)
-			if err != nil {
-				return nil, nil, err
+		newNetworkConfigisNetworkConfig = true
+		if len(newNetworkConfig.Nodes) == len(networkConfig.Nodes) {
+			for i := range newNetworkConfig.Nodes {
+				if newNetworkConfig.Nodes[i] != networkConfig.Nodes[i] {
+					newNetworkConfigisNetworkConfig = false
+				}
 			}
-			//JIRA FLY2-106 get config envelope
-			block := c.CreateBlock([]*common.Envelope{env})
-			c.writeConfigBlock(block)
-			c.removeConfigEnv()
-			//JIRA FLY2-106 remove reconfiguration
-			defer func() {
-				c.pendingConfigs = PopReconfiguration(c.pendingConfigs)
-			}()
+		} else {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.CheckpointInterval != networkConfig.CheckpointInterval {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.NumberOfBuckets != networkConfig.NumberOfBuckets {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.MaxEpochLength != networkConfig.MaxEpochLength {
+			newNetworkConfigisNetworkConfig = false
+		}
+		if newNetworkConfig.F != networkConfig.F {
+			newNetworkConfigisNetworkConfig = false
 		}
 	} else {
 		pr = nil
 	}
 
-	c.Node.CheckpointSeqNo = c.lastBlock.Header.Number
-	networkStateBytes, err := proto.Marshal(&msgs.NetworkState{
+	networkState := &msgs.NetworkState{
 		Config:                  networkConfig,
 		Clients:                 clientsState,
 		PendingReconfigurations: pr,
-	})
+	}
+
+	c.Node.epochConfig = epochConfig
+	c.Node.networkState = networkState
+	c.Node.checkpointSeqNo = seqNo
+
+	if newNetworkConfigisNetworkConfig {
+		networkState.PendingReconfigurations = nil
+		newNetworkConfig := pr[1].GetNewConfig()
+		for i := range newNetworkConfig.Nodes {
+			if newNetworkConfig.Loyalties[i] != 0 {
+				networkConfig.Loyalties[i] = newNetworkConfig.Loyalties[i]
+			}
+			if newNetworkConfig.Timeouts[i] != 0 {
+				networkConfig.Timeouts[i] = newNetworkConfig.Timeouts[i]
+			}
+		}
+		env := req.Payload
+		env, err := c.revalidateConfigMsg(req)
+		if err != nil {
+			return nil, nil, err
+		}
+		//JIRA FLY2-106 get config envelope
+		block := c.CreateBlock([]*common.Envelope{env})
+		c.writeConfigBlock(block)
+		c.removeConfigEnv()
+		//JIRA FLY2-106 remove reconfiguration
+		defer func() {
+			c.pendingConfigs = PopReconfiguration(c.pendingConfigs)
+		}()
+	}
+
+	networkStateBytes, err := proto.Marshal(networkState)
 	if err != nil {
-
 		return nil, nil, errors.WithMessage(err, "Could not marshal network state")
-
 	}
 	//JIRA FLY2-106 Generating last block bytes to be added to snap data
 	lastBlockBytes, err := proto.Marshal(&common.Block{
@@ -1234,7 +1356,7 @@ func (c *Chain) Snap(networkConfig *msgs.NetworkState_Config, clientsState []*ms
 		return nil, nil, errors.WithMessage(err, "Could not marshal Snap Data")
 
 	}
-	err = c.Node.PersistSnapshot(c.Node.CheckpointSeqNo, snapDataBytes)
+	err = c.Node.PersistSnapshot(c.Node.checkpointSeqNo, snapDataBytes)
 	if err != nil {
 		c.logger.Panicf("Error while snap persist : %s", err)
 	}

@@ -180,6 +180,10 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 		SuspectTicks:         m.Options.SuspectTicks,
 		NewEpochTimeoutTicks: m.Options.NewEpochTimeoutTicks,
 		BufferSize:           m.Options.BufferSize,
+		NumberOfBuckets:      m.Options.NumberOfBuckets,
+		CheckpointInterval:   m.Options.CheckpointInterval,
+		MaxEpochLength:       m.Options.MaxEpochLength,
+		NodeStatuses:         m.Options.NodeStatuses,
 		// TODO(harry_knight) is this needed?
 		MaxSizePerMsg: uint64(support.SharedConfig().BatchSize().PreferredMaxBytes),
 

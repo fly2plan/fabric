@@ -202,8 +202,8 @@ var genesisDefaults = TopLevel{
 		MirBFT: &hlmirbft.ConfigMetadata{
 			Options: &hlmirbft.Options{
 				HeartbeatTicks:       2,
-				SuspectTicks:         4,
-				NewEpochTimeoutTicks: 8,
+				SuspectTicks:         10,
+				NewEpochTimeoutTicks: 30,
 				BufferSize:           5 * 1024 * 1024, // 5 MB
 			},
 		},
@@ -422,8 +422,27 @@ loop:
 			logger.Panicf("%s configuration missing", HLMirBFT)
 		}
 		if ord.MirBFT.Options == nil {
-			logger.Infof("Orderer.MirBFT.Options unset, setting to %v", genesisDefaults.Orderer.MirBFT.Options)
 			ord.MirBFT.Options = genesisDefaults.Orderer.MirBFT.Options
+
+			defaultNumberOfBuckets := len(ord.MirBFT.Consenters)
+			ord.MirBFT.Options.NumberOfBuckets = int32(defaultNumberOfBuckets)
+
+			defaultCheckpointInterval := ord.MirBFT.Options.NumberOfBuckets * 5
+			ord.MirBFT.Options.CheckpointInterval = defaultCheckpointInterval
+
+			defaultMaxEpochLength := uint64(ord.MirBFT.Options.CheckpointInterval) * 10
+			ord.MirBFT.Options.MaxEpochLength = defaultMaxEpochLength
+
+			defaultNodeStatuses := make([]*hlmirbft.NodeStatus, len(ord.MirBFT.Consenters))
+			for i := 0; i < len(ord.MirBFT.Consenters); i++ {
+				defaultNodeStatuses[i] = &hlmirbft.NodeStatus{
+					Loyalty: 1000,
+					Timeout: 0,
+				}
+			}
+			ord.MirBFT.Options.NodeStatuses = defaultNodeStatuses
+
+			logger.Infof("Orderer.MirBFT.Options unset, setting to %v", ord.MirBFT.Options)
 		}
 	third_loop:
 		for {
@@ -444,6 +463,31 @@ loop:
 				logger.Infof("Orderer.MirBFT.Options.BufferSize unset, setting to %v", genesisDefaults.Orderer.MirBFT.Options.BufferSize)
 				ord.MirBFT.Options.BufferSize = genesisDefaults.Orderer.MirBFT.Options.BufferSize
 
+			case ord.MirBFT.Options.NumberOfBuckets == 0:
+				defaultNumberOfBuckets := len(ord.MirBFT.Consenters)
+				logger.Infof("Orderer.MirBFT.Options.NumberOfBuckets unset, setting to %v", defaultNumberOfBuckets)
+				ord.MirBFT.Options.NumberOfBuckets = int32(defaultNumberOfBuckets)
+
+			case ord.MirBFT.Options.CheckpointInterval == 0:
+				defaultCheckpointInterval := ord.MirBFT.Options.NumberOfBuckets * 5
+				logger.Infof("Orderer.MirBFT.Options.CheckpointInterval unset, setting to %v", defaultCheckpointInterval)
+				ord.MirBFT.Options.CheckpointInterval = defaultCheckpointInterval
+
+			case ord.MirBFT.Options.MaxEpochLength == 0:
+				defaultMaxEpochLength := uint64(ord.MirBFT.Options.CheckpointInterval) * 10
+				logger.Infof("Orderer.MirBFT.Options.MaxEpochLength unset, setting to %v", defaultMaxEpochLength)
+				ord.MirBFT.Options.MaxEpochLength = defaultMaxEpochLength
+
+			case ord.MirBFT.Options.NodeStatuses == nil:
+				defaultNodeStatuses := make([]*hlmirbft.NodeStatus, len(ord.MirBFT.Consenters))
+				for i := 0; i < len(ord.MirBFT.Consenters); i++ {
+					defaultNodeStatuses[i] = &hlmirbft.NodeStatus{
+						Loyalty: 1000,
+						Timeout: 0,
+					}
+				}
+				logger.Infof("Orderer.MirBFT.Options.NodeStatuses unset, setting to %v", defaultNodeStatuses)
+				ord.MirBFT.Options.NodeStatuses = defaultNodeStatuses
 			case len(ord.MirBFT.Consenters) == 0:
 				logger.Panicf("%s configuration did not specify any consenter", HLMirBFT)
 
