@@ -82,7 +82,7 @@ type Configurator interface {
 // RPC is used to mock the transport layer in tests.
 type RPC interface {
 	SendConsensus(dest uint64, msg *orderer.ConsensusRequest) error
-	SendSubmit(dest uint64, request *orderer.SubmitRequest) error
+	SendSubmit(dest uint64, request *orderer.SubmitRequest, report func(err error)) error
 }
 
 //go:generate counterfeiter -o mocks/mock_blockpuller.go . BlockPuller
@@ -100,7 +100,8 @@ type CreateBlockPuller func() (BlockPuller, error)
 
 // Options contains all the configurations relevant to the chain.
 type Options struct {
-	MirBFTID uint64
+	RPCTimeout time.Duration
+	MirBFTID   uint64
 
 	Clock clock.Clock
 
@@ -534,18 +535,15 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 	reqBytes := protoutil.MarshalOrPanic(req)
 	msgToProcess := &msgs.Request{ClientId: c.MirBFTID, ReqNo: nextReqNo, Data: reqBytes}
 	msgToProcessBytes := protoutil.MarshalOrPanic(msgToProcess)
+	wrappedReq := &orderer.SubmitRequest{
+		Channel: c.channelID,
+		Payload: &common.Envelope{
+			Payload:   msgToProcessBytes,
+			Signature: req.Payload.Signature,
+		}}
 	for nodeID, _ := range c.opts.Consenters {
 		if nodeID != c.MirBFTID {
-			err := c.Node.rpc.SendSubmit(nodeID,
-				&orderer.SubmitRequest{
-					Channel: c.channelID,
-					Payload: &common.Envelope{
-						Payload:   msgToProcessBytes,
-						Signature: req.Payload.Signature,
-					}})
-			if err != nil {
-				c.logger.Warnf("Failed to broadcast Message to Node : %d with error : %v", nodeID, err)
-			}
+			c.forwardToNode(nodeID, wrappedReq)
 		}
 	}
 	if err := c.proposeMsg(msgToProcess); err != nil {
@@ -555,13 +553,15 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 	return nil
 }
 
+func (c *Chain) forwardToNode(nodeID uint64, wrappedReq *orderer.SubmitRequest) {
+	if err := c.rpc.SendSubmit(nodeID, wrappedReq, nil); err != nil {
+		c.logger.Warnf("Failed to broadcast message to node : %d with error: %v", nodeID, err)
+	}
+}
+
 type apply struct {
 	entries []raftpb.Entry
 	soft    *raft.SoftState
-}
-
-func isCandidate(state raft.StateType) bool {
-	return state == raft.StatePreCandidate || state == raft.StateCandidate
 }
 
 func (c *Chain) run() {
@@ -1304,6 +1304,11 @@ func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clie
 	c.Node.epochConfig = epochConfig
 	c.Node.networkState = networkState
 	c.Node.checkpointSeqNo = seqNo
+
+	c.logger.Infof("Snap")
+	c.logger.Infof("< %+v >", c.Node.epochConfig)
+	c.logger.Infof("< %+v >", c.Node.networkState)
+	c.logger.Infof("< %+v >", c.Node.checkpointSeqNo)
 
 	if newNetworkConfigisNetworkConfig {
 		networkState.PendingReconfigurations = nil

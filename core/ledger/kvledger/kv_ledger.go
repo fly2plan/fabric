@@ -47,7 +47,7 @@ var (
 // This implementation provides a key-value based data model
 type kvLedger struct {
 	ledgerID               string
-	bootSnapshotMetadata   *snapshotMetadata
+	bootSnapshotMetadata   *SnapshotMetadata
 	blockStore             *blkstorage.BlockStore
 	pvtdataStore           *pvtdatastorage.Store
 	txmgr                  *txmgr.LockBasedTxMgr
@@ -72,7 +72,7 @@ type kvLedger struct {
 type lgrInitializer struct {
 	ledgerID                 string
 	initializingFromSnapshot bool
-	bootSnapshotMetadata     *snapshotMetadata
+	bootSnapshotMetadata     *SnapshotMetadata
 	blockStore               *blkstorage.BlockStore
 	pvtdataStore             *pvtdatastorage.Store
 	stateDB                  *privacyenabledstate.DB
@@ -502,7 +502,7 @@ func (l *kvLedger) GetTransactionByID(txID string) (*peer.ProcessedTransaction, 
 	if err != nil {
 		return nil, err
 	}
-	txVResult, err := l.blockStore.RetrieveTxValidationCodeByTxID(txID)
+	txVResult, _, err := l.blockStore.RetrieveTxValidationCodeByTxID(txID)
 	if err != nil {
 		return nil, err
 	}
@@ -554,11 +554,12 @@ func (l *kvLedger) GetBlockByTxID(txID string) (*common.Block, error) {
 	return block, err
 }
 
-func (l *kvLedger) GetTxValidationCodeByTxID(txID string) (peer.TxValidationCode, error) {
+// GetTxValidationCodeByTxID returns transaction validation code and block number in which the transaction was committed
+func (l *kvLedger) GetTxValidationCodeByTxID(txID string) (peer.TxValidationCode, uint64, error) {
 	l.blockAPIsRWLock.RLock()
 	defer l.blockAPIsRWLock.RUnlock()
-	txValidationCode, err := l.blockStore.RetrieveTxValidationCodeByTxID(txID)
-	return txValidationCode, err
+	txValidationCode, blkNum, err := l.blockStore.RetrieveTxValidationCodeByTxID(txID)
+	return txValidationCode, blkNum, err
 }
 
 // NewTxSimulator returns new `ledger.TxSimulator`
@@ -933,22 +934,29 @@ func (l *kvLedger) sendCommitNotification(blockNum uint64, txStatsInfo []*valida
 		close(l.commitNotifier.dataChannel)
 		l.commitNotifier = nil
 	default:
-		txIDValidationCodes := map[string]peer.TxValidationCode{}
-
+		txsByID := map[string]struct{}{}
+		txs := []*ledger.CommitNotificationTxInfo{}
 		for _, t := range txStatsInfo {
 			txID := t.TxIDFromChannelHeader
-			_, ok := txIDValidationCodes[txID]
+			_, ok := txsByID[txID]
 
 			if txID == "" || ok {
 				continue
 			}
+			txsByID[txID] = struct{}{}
 
-			txIDValidationCodes[txID] = t.ValidationCode
+			txs = append(txs, &ledger.CommitNotificationTxInfo{
+				TxType:             t.TxType,
+				TxID:               t.TxIDFromChannelHeader,
+				ValidationCode:     t.ValidationCode,
+				ChaincodeID:        t.ChaincodeID,
+				ChaincodeEventData: t.ChaincodeEventData,
+			})
 		}
 
 		l.commitNotifier.dataChannel <- &ledger.CommitNotification{
-			BlockNumber:         blockNum,
-			TxIDValidationCodes: txIDValidationCodes,
+			BlockNumber: blockNum,
+			TxsInfo:     txs,
 		}
 	}
 }

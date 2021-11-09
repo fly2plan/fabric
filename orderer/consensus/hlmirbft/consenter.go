@@ -172,9 +172,10 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 	}
 
 	opts := Options{
-		MirBFTID: id,
-		Clock:    clock.NewClock(),
-		Logger:   c.Logger,
+		RPCTimeout: c.OrdererConfig.General.Cluster.RPCTimeout,
+		MirBFTID:   id,
+		Clock:      clock.NewClock(),
+		Logger:     c.Logger,
 
 		HeartbeatTicks:       m.Options.HeartbeatTicks,
 		SuspectTicks:         m.Options.SuspectTicks,

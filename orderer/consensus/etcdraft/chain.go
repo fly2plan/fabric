@@ -74,7 +74,7 @@ type Configurator interface {
 // RPC is used to mock the transport layer in tests.
 type RPC interface {
 	SendConsensus(dest uint64, msg *orderer.ConsensusRequest) error
-	SendSubmit(dest uint64, request *orderer.SubmitRequest) error
+	SendSubmit(dest uint64, request *orderer.SubmitRequest, report func(err error)) error
 }
 
 //go:generate counterfeiter -o mocks/mock_blockpuller.go . BlockPuller
@@ -92,7 +92,8 @@ type CreateBlockPuller func() (BlockPuller, error)
 
 // Options contains all the configurations relevant to the chain.
 type Options struct {
-	RaftID uint64
+	RPCTimeout time.Duration
+	RaftID     uint64
 
 	Clock clock.Clock
 
@@ -543,8 +544,7 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 		}
 
 		if lead != c.raftID {
-			if err := c.rpc.SendSubmit(lead, req); err != nil {
-				c.Metrics.ProposalFailures.Add(1)
+			if err := c.forwardToLeader(lead, req); err != nil {
 				return err
 			}
 		}
@@ -554,6 +554,38 @@ func (c *Chain) Submit(req *orderer.SubmitRequest, sender uint64) error {
 		return errors.Errorf("chain is stopped")
 	}
 
+	return nil
+}
+
+func (c *Chain) forwardToLeader(lead uint64, req *orderer.SubmitRequest) error {
+	c.logger.Infof("Forwarding transaction to the leader %d", lead)
+	timer := time.NewTimer(c.opts.RPCTimeout)
+	defer timer.Stop()
+
+	sentChan := make(chan struct{})
+	atomicErr := &atomic.Value{}
+
+	report := func(err error) {
+		if err != nil {
+			atomicErr.Store(err.Error())
+			c.Metrics.ProposalFailures.Add(1)
+		}
+		close(sentChan)
+	}
+
+	c.rpc.SendSubmit(lead, req, report)
+
+	select {
+	case <-sentChan:
+	case <-c.doneC:
+		return errors.Errorf("chain is stopped")
+	case <-timer.C:
+		return errors.Errorf("timed out (%v) waiting on forwarding to %d", c.opts.RPCTimeout, lead)
+	}
+
+	if atomicErr.Load() != nil {
+		return errors.Errorf(atomicErr.Load().(string))
+	}
 	return nil
 }
 
@@ -877,7 +909,12 @@ func (c *Chain) writeBlock(block *common.Block, index uint64) {
 func (c *Chain) ordered(msg *orderer.SubmitRequest) (batches [][]*common.Envelope, pending bool, err error) {
 	seq := c.support.Sequence()
 
-	if c.isConfig(msg.Payload) {
+	isconfig, err := c.isConfig(msg.Payload)
+	if err != nil {
+		return nil, false, errors.Errorf("bad message: %s", err)
+	}
+
+	if isconfig {
 		// ConfigMsg
 		if msg.LastValidationSeq < seq {
 			c.logger.Warnf("Config message was validated against %d, although current config seq has advanced (%d)", msg.LastValidationSeq, seq)
@@ -969,12 +1006,18 @@ func (c *Chain) catchUp(snap *raftpb.Snapshot) error {
 }
 
 func (c *Chain) commitBlock(block *common.Block) {
+	// read consenters metadata to write into the replicated block
+	blockMeta, err := protoutil.GetConsenterMetadataFromBlock(block)
+	if err != nil {
+		c.logger.Panicf("Failed to obtain metadata: %s", err)
+	}
+
 	if !protoutil.IsConfigBlock(block) {
-		c.support.WriteBlock(block, nil)
+		c.support.WriteBlock(block, blockMeta.Value)
 		return
 	}
 
-	c.support.WriteConfigBlock(block, nil)
+	c.support.WriteConfigBlock(block, blockMeta.Value)
 
 	configMembership := c.detectConfChange(block)
 
@@ -1145,13 +1188,14 @@ func (c *Chain) gc() {
 	}
 }
 
-func (c *Chain) isConfig(env *common.Envelope) bool {
+func (c *Chain) isConfig(env *common.Envelope) (bool, error) {
 	h, err := protoutil.ChannelHeader(env)
 	if err != nil {
-		c.logger.Panicf("failed to extract channel header from envelope")
+		c.logger.Errorf("failed to extract channel header from envelope")
+		return false, err
 	}
 
-	return h.Type == int32(common.HeaderType_CONFIG) || h.Type == int32(common.HeaderType_ORDERER_TRANSACTION)
+	return h.Type == int32(common.HeaderType_CONFIG) || h.Type == int32(common.HeaderType_ORDERER_TRANSACTION), nil
 }
 
 func (c *Chain) configureComm() error {

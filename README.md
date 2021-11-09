@@ -9,8 +9,8 @@
 [![GoDoc](https://godoc.org/github.com/hyperledger/fabric?status.svg)](https://godoc.org/github.com/hyperledger/fabric)
 [![Documentation Status](https://readthedocs.org/projects/hyperledger-fabric/badge/?version=latest)](http://hyperledger-fabric.readthedocs.io/en/latest)
 
-This project is an _Active_ Hyperledger project. For more information on the history of this project see the [Fabric wiki page](https://wiki.hyperledger.org/display/fabric). Information on what _Active_ entails can be found in
-the [Hyperledger Project Lifecycle document](https://wiki.hyperledger.org/display/HYP/Project+Lifecycle).
+This project is a _Graduated_ Hyperledger project. For more information on the history of this project see the [Fabric wiki page](https://wiki.hyperledger.org/display/fabric). Information on what _Graduated_ entails can be found in
+the [Hyperledger Project Lifecycle document](https://tsc.hyperledger.org/project-lifecycle.html).
 Hyperledger Fabric is a platform for distributed ledger solutions, underpinned
 by a modular architecture delivering high degrees of confidentiality,
 resiliency, flexibility and scalability. It is designed to support pluggable
@@ -39,8 +39,7 @@ Additionally, each LTS release is upgradable to the next LTS release.
 
 Fabric releases and release notes can be found on the [GitHub releases page](https://github.com/hyperledger/fabric/releases).
 
-Please visit the [Hyperledger Fabric Jira dashboard](https://jira.hyperledger.org/secure/Dashboard.jspa?selectPageId=10104) for our release roadmap.
-
+Please visit the [GitHub issues with Epic label](https://github.com/hyperledger/fabric/labels/Epic) for our release roadmap.
 Follow the release discussion on the [#fabric-release](https://chat.hyperledger.org/channel/fabric-release) channel in RocketChat.
 
 ## Documentation, Getting Started and Developer Guides
@@ -74,7 +73,7 @@ for the full details.
 
 [Hyperledger Chat](http://chat.hyperledger.org/channel/fabric)
 
-[Hyperledger Fabric Issue Tracking (JIRA)](https://jira.hyperledger.org/secure/Dashboard.jspa?selectPageId=10104)
+[Hyperledger Fabric Issue Tracking (GitHub Issues)](https://github.com/hyperledger/fabric/issues)
 
 [Hyperledger Fabric Wiki](https://wiki.hyperledger.org/display/Fabric)
 

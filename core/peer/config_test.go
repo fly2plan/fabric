@@ -155,6 +155,15 @@ func TestGetServerConfig(t *testing.T) {
 	require.Equal(t, true, sc.SecOpts.RequireClientCert, "ServerConfig.SecOpts.RequireClientCert should be true")
 	require.Equal(t, 2, len(sc.SecOpts.ClientRootCAs), "ServerConfig.SecOpts.ClientRootCAs should contain 2 entries")
 
+	// GRPC max message size options
+	require.Equal(t, comm.DefaultMaxRecvMsgSize, sc.MaxRecvMsgSize, "ServerConfig.MaxRecvMsgSize should be set to default value %v", comm.DefaultMaxRecvMsgSize)
+	require.Equal(t, comm.DefaultMaxSendMsgSize, sc.MaxSendMsgSize, "ServerConfig.MaxSendMsgSize should be set to default value %v", comm.DefaultMaxSendMsgSize)
+	viper.Set("peer.maxRecvMsgSize", "1024")
+	viper.Set("peer.maxSendMsgSize", "1024")
+	sc, _ = GetServerConfig()
+	require.Equal(t, 1024, sc.MaxRecvMsgSize, "ServerConfig.MaxRecvMsgSize should be set to custom value 1024")
+	require.Equal(t, 1024, sc.MaxSendMsgSize, "ServerConfig.MaxSendMsgSize should be set to custom value 1024")
+
 	// bad config with TLS
 	viper.Set("peer.tls.rootcert.file", "non-existent-file.pem")
 	_, err = GetServerConfig()
@@ -454,6 +463,26 @@ func TestPropagateEnvironment(t *testing.T) {
 		GatewayOptions: config.GetOptions(viper.GetViper()),
 	}
 	require.Equal(t, expectedConfig, coreConfig)
+}
+
+func TestExternalBuilderConfigAsEnvVar(t *testing.T) {
+	defer viper.Reset()
+	viper.Set("peer.address", "localhost:8080")
+	viper.Set("chaincode.externalBuilders", "[{name: relative, path: relative/plugin_dir, propagateEnvironment: [ENVVAR_NAME_TO_PROPAGATE_FROM_PEER, GOPROXY]}, {name: absolute, path: /absolute/plugin_dir}]")
+	coreConfig, err := GlobalConfig()
+	require.NoError(t, err)
+
+	require.Equal(t, []ExternalBuilder{
+		{
+			Path:                 "relative/plugin_dir",
+			Name:                 "relative",
+			PropagateEnvironment: []string{"ENVVAR_NAME_TO_PROPAGATE_FROM_PEER", "GOPROXY"},
+		},
+		{
+			Path: "/absolute/plugin_dir",
+			Name: "absolute",
+		},
+	}, coreConfig.ExternalBuilders)
 }
 
 func TestMissingExternalBuilderPath(t *testing.T) {

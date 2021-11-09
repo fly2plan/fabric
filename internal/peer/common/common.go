@@ -293,6 +293,14 @@ func configFromEnv(prefix string) (address string, clientConfig comm.ClientConfi
 		}
 	}
 	clientConfig.SecOpts = secOpts
+	clientConfig.MaxRecvMsgSize = comm.DefaultMaxRecvMsgSize
+	if viper.IsSet(prefix + ".maxRecvMsgSize") {
+		clientConfig.MaxRecvMsgSize = int(viper.GetInt32(prefix + ".maxRecvMsgSize"))
+	}
+	clientConfig.MaxSendMsgSize = comm.DefaultMaxSendMsgSize
+	if viper.IsSet(prefix + ".maxSendMsgSize") {
+		clientConfig.MaxSendMsgSize = int(viper.GetInt32(prefix + ".maxSendMsgSize"))
+	}
 	return
 }
 
@@ -339,7 +347,7 @@ func InitCmd(cmd *cobra.Command, args []string) {
 	})
 
 	// chaincode packaging does not require material from the local MSP
-	if cmd.CommandPath() == "peer lifecycle chaincode package" {
+	if cmd.CommandPath() == "peer lifecycle chaincode package" || cmd.CommandPath() == "peer lifecycle chaincode calculatepackageid" {
 		mainLogger.Debug("peer lifecycle chaincode package does not need to init crypto")
 		return
 	}

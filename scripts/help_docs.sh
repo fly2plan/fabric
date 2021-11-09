@@ -85,7 +85,7 @@ generateOrCheck \
         docs/wrappers/peer_chaincode_postscript.md \
         "${commands[@]}"
 
-commands=("peer lifecycle" "peer lifecycle chaincode" "peer lifecycle chaincode package" "peer lifecycle chaincode install" "peer lifecycle chaincode queryinstalled" "peer lifecycle chaincode getinstalledpackage" "peer lifecycle chaincode approveformyorg" "peer lifecycle chaincode queryapproved" "peer lifecycle chaincode checkcommitreadiness" "peer lifecycle chaincode commit" "peer lifecycle chaincode querycommitted")
+commands=("peer lifecycle" "peer lifecycle chaincode" "peer lifecycle chaincode package" "peer lifecycle chaincode install" "peer lifecycle chaincode queryinstalled" "peer lifecycle chaincode getinstalledpackage" "peer lifecycle chaincode calculatepackageid" "peer lifecycle chaincode approveformyorg" "peer lifecycle chaincode queryapproved" "peer lifecycle chaincode checkcommitreadiness" "peer lifecycle chaincode commit" "peer lifecycle chaincode querycommitted")
 generateOrCheck \
         docs/source/commands/peerlifecycle.md \
         docs/wrappers/peer_lifecycle_chaincode_preamble.md \
@@ -99,7 +99,7 @@ generateOrCheck \
         docs/wrappers/peer_channel_postscript.md \
         "${commands[@]}"
 
-commands=("peer node pause" "peer node rebuild-dbs" "peer node reset" "peer node resume" "peer node rollback" "peer node start" "peer node upgrade-dbs")
+commands=("peer node pause" "peer node rebuild-dbs" "peer node reset" "peer node resume" "peer node rollback" "peer node start" "peer node unjoin" "peer node upgrade-dbs")
 generateOrCheck \
         docs/source/commands/peernode.md \
         docs/wrappers/peer_node_preamble.md \

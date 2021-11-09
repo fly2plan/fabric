@@ -357,7 +357,7 @@ For example, in the following snippet of the ``CreateAsset`` function,
 
         err = ctx.GetStub().PutPrivateData(assetCollection, assetInput.ID, assetJSONasBytes)
         if err != nil {
-            return fmt.Errorf("failed to put asset into private data collecton: %v", err)
+            return fmt.Errorf("failed to put asset into private data collection: %v", err)
         }
 
         // Save asset details to collection visible to owning organization
@@ -458,7 +458,7 @@ This allows Org1 and Org2 to create an asset without receiving an endorsement fr
 the other organization. You can see the steps required to deploy the chaincode
 printed in your logs after you issue the command above.
 
-When both organizations approve the chaincode defition using the
+When both organizations approve the chaincode definition using the
 `peer lifecycle chaincode approveformyorg <commands/peerlifecycle.html#peer-lifecycle-chaincode-approveformyorg>`__
 command, the chaincode definition includes the path to the private data collection
 definition using the ``--collections-config`` flag. You can see the following `approveformyorg`
@@ -975,6 +975,11 @@ installed on a peer and instantiated on a channel. The associated indexes are
 automatically deployed upon chaincode instantiation on the channel when
 the  ``--collections-config`` flag is specified pointing to the location of
 the collection JSON file.
+
+.. note:: It is not possible to create an index for use with an implicit private data collection.
+          An implicit collection is based on the organizations name and is created automatically. The format of the name
+          is ``_implicit_org_<OrgsMSPid>``
+          Please see `FAB-17916 <https://jira.hyperledger.org/browse/FAB-17916>`__ for more information.
 
 Clean up
 --------
