@@ -8,8 +8,8 @@ See [the documentation on Maintainers](https://hyperledger-fabric.readthedocs.io
 | Name | GitHub | Chat | email
 |------|--------|------|----------------------
 | Alessandro Sorniotti | [ale-linux][ale-linux] | aso | <ale.linux@sopit.net>
-| Brett Logan | [lindluni][lindluni] | BrettLogan | <development.brett@gmail.com>
-| Artem Barger | [c0rwin][c0rwin] | c0rwin | <bartem@il.ibm.com>
+| Andrew Coleman | [andrew-coleman][andrew-coleman] | andrew-coleman | <andrew_coleman@uk.ibm.com>
+| Artem Barger | [c0rwin][c0rwin] | c0rwin | <artem@bargr.net>
 | Senthilnathan Natarajan | [cendhu][cendhu] | Senthil1 | <cendhu@gmail.com>
 | Dave Enyeart | [denyeart][denyeart] | dave.enyeart | <enyeart@us.ibm.com>
 | Jay Guo | [guoger][guoger] | guoger | <guojiannan1101@gmail.com>
@@ -17,7 +17,6 @@ See [the documentation on Maintainers](https://hyperledger-fabric.readthedocs.io
 | Manish Sethi | [manish-sethi][manish-sethi] | manish-sethi | <manish.sethi@gmail.com>
 | Gari Singh | [mastersingh24][mastersingh24] | mastersingh24 | <gari.r.singh@gmail.com>
 | Matthew Sykes | [sykesm][sykesm] | sykesm | <matthew.sykes@gmail.com>
-| Will Lahti | [wlahti][wlahti] | wlahti | <wtlahti@us.ibm.com>
 | Yacov Manevich | [yacovm][yacovm] | yacovm | <yacovm@il.ibm.com>
 
 **Documentation Maintainers**
@@ -34,7 +33,6 @@ See [the documentation on Maintainers](https://hyperledger-fabric.readthedocs.io
 
 | Name | GitHub | Chat | email
 |------|--------|------|----------------------
-| Brett Logan | [lindluni][lindluni] | BrettLogan | <development.brett@gmail.com>
 | Chris Ferris | [christo4ferris][christo4ferris] | cbf | <chris.ferris@gmail.com>
 | Dave Enyeart | [denyeart][denyeart] | dave.enyeart | <enyeart@us.ibm.com>
 | Gari Singh | [mastersingh24][mastersingh24] | mastersingh24 | <gari.r.singh@gmail.com>
@@ -56,8 +54,11 @@ See [the documentation on Maintainers](https://hyperledger-fabric.readthedocs.io
 | Keith Smith | [smithbk][smithbk] | smithbk | <bksmith@us.ibm.com>
 | Sheehan Anderson | [srderson][srderson] | sheehan | <sranderson@gmail.com>
 | Tamas Blummer | [tamasblummer][tamasblummer] | tamas | <tamas@digitalasset.com>
+| Brett Logan | [lindluni][lindluni] | BrettLogan | <development.brett@gmail.com>
+| Will Lahti | [wlahti][wlahti] | wlahti | <will.lahti@gmail.com>
 
 [ale-linux]: https://github.com/ale-linux
+[andrew-coleman]: https://github.com/andrew-coleman
 [binhn]: https://github.com/binhn
 [lindluni]: https://github.com/lindluni
 [c0rwin]: https://github.com/c0rwin

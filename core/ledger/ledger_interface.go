@@ -163,8 +163,8 @@ type PeerLedger interface {
 	GetBlockByHash(blockHash []byte) (*common.Block, error)
 	// GetBlockByTxID returns a block which contains a transaction
 	GetBlockByTxID(txID string) (*common.Block, error)
-	// GetTxValidationCodeByTxID returns reason code of transaction validation
-	GetTxValidationCodeByTxID(txID string) (peer.TxValidationCode, error)
+	// GetTxValidationCodeByTxID returns transaction validation code and block number in which the transaction was committed
+	GetTxValidationCodeByTxID(txID string) (peer.TxValidationCode, uint64, error)
 	// NewTxSimulator gives handle to a transaction simulator.
 	// A client can obtain more than one 'TxSimulator's for parallel execution.
 	// Any snapshoting/synchronization should be performed at the implementation level if required
@@ -470,10 +470,74 @@ func (filter PvtNsCollFilter) Has(ns string, coll string) bool {
 	return collFilter[coll]
 }
 
+// PrivateReads captures which private data collections are read during TX simulation.
+type PrivateReads map[string]map[string]struct{}
+
+// Add a collection to the set of private data collections that are read by the chaincode.
+func (pr PrivateReads) Add(ns, coll string) {
+	if _, ok := pr[ns]; !ok {
+		pr[ns] = map[string]struct{}{}
+	}
+	pr[ns][coll] = struct{}{}
+}
+
+// Clone returns a copy of this struct.
+func (pr PrivateReads) Clone() PrivateReads {
+	clone := PrivateReads{}
+	for ns, v := range pr {
+		for coll := range v {
+			clone.Add(ns, coll)
+		}
+	}
+	return clone
+}
+
+// Exists returns whether a collection has been read
+func (pr PrivateReads) Exists(ns, coll string) bool {
+	if c, ok := pr[ns]; ok {
+		if _, ok2 := c[coll]; ok2 {
+			return true
+		}
+	}
+	return false
+}
+
+// WritesetMetadata represents the content of the state metadata for each state (key) that gets written to during transaction simulation.
+type WritesetMetadata map[string]map[string]map[string]map[string][]byte
+
+// Add metadata to the structure.
+func (wm WritesetMetadata) Add(ns, coll, key string, metadata map[string][]byte) {
+	if _, ok := wm[ns]; !ok {
+		wm[ns] = map[string]map[string]map[string][]byte{}
+	}
+	if _, ok := wm[ns][coll]; !ok {
+		wm[ns][coll] = map[string]map[string][]byte{}
+	}
+	if metadata == nil {
+		metadata = map[string][]byte{}
+	}
+	wm[ns][coll][key] = metadata
+}
+
+// Clone returns a copy of this struct.
+func (wm WritesetMetadata) Clone() WritesetMetadata {
+	clone := WritesetMetadata{}
+	for ns, cm := range wm {
+		for coll, km := range cm {
+			for key, metadata := range km {
+				clone.Add(ns, coll, key, metadata)
+			}
+		}
+	}
+	return clone
+}
+
 // TxSimulationResults captures the details of the simulation results
 type TxSimulationResults struct {
 	PubSimulationResults *rwset.TxReadWriteSet
 	PvtSimulationResults *rwset.TxPvtReadWriteSet
+	PrivateReads         PrivateReads
+	WritesetMetadata     WritesetMetadata
 }
 
 // GetPubSimulationBytes returns the serialized bytes of public readwrite set
@@ -733,9 +797,24 @@ type HashProvider interface {
 	GetHash(opts bccsp.HashOpts) (hash.Hash, error)
 }
 
+// CommitNotification is sent on each block commit to the channel returned by PeerLedger.CommitNotificationsChannel().
+// TxsInfo field contains the info about individual transactions in the block in the order the transactions appear in the block
+// The transactions with a unique and non-empty txID are included in the notification
 type CommitNotification struct {
-	BlockNumber         uint64
-	TxIDValidationCodes map[string]peer.TxValidationCode
+	BlockNumber uint64
+	TxsInfo     []*CommitNotificationTxInfo
+}
+
+// CommitNotificationTxInfo contains the details of a transaction that is included in the CommitNotification
+// ChaincodeID will be nil if the transaction is not an endorser transaction. This may or may not be nil if the tranasction is invalid.
+// Specifically, it will be nil if the transaction is marked invalid by the validator (e.g., bad payload or insufficient endorements) and it will be non-nil if the transaction is marked invalid for concurrency conflicts.
+// However, it is guaranteed be non-nil if the transaction is a valid endorser transaction.
+type CommitNotificationTxInfo struct {
+	TxType             common.HeaderType
+	TxID               string
+	ValidationCode     peer.TxValidationCode
+	ChaincodeID        *peer.ChaincodeID
+	ChaincodeEventData []byte
 }
 
 //go:generate counterfeiter -o mock/state_listener.go -fake-name StateListener . StateListener

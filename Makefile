@@ -25,14 +25,15 @@
 #   - docs - builds the documentation in html format
 #   - gotools - installs go tools like golint
 #   - help-docs - generate the command reference docs
-#   - idemixgen - builds a native idemixgen binary
 #   - integration-test-prereqs - setup prerequisites for integration tests
 #   - integration-test - runs the integration tests
+#   - ledgerutil - builds a native ledgerutil binary
 #   - license - checks go source files for Apache license header
 #   - linter - runs all code checks
 #   - native - ensures all native binaries are available
 #   - orderer - builds a native fabric orderer binary
 #   - orderer-docker[-clean] - ensures the orderer container is available[/cleaned]
+#   - osnadmin - builds a native fabric osnadmin binary
 #   - peer - builds a native fabric peer binary
 #   - peer-docker[-clean] - ensures the peer container is available[/cleaned]
 #   - profile - runs unit tests for all packages in coverprofile mode (slow)
@@ -45,7 +46,7 @@
 #   - unit-test - runs the go-test based unit tests
 #   - verify - runs unit tests for only the changed package tree
 
-ALPINE_VER ?= 3.13
+ALPINE_VER ?= 3.14
 BASE_VERSION = 2.4.0
 
 # 3rd party image version
@@ -77,19 +78,19 @@ METADATA_VAR += CommitSHA=$(EXTRA_VERSION)
 METADATA_VAR += BaseDockerLabel=$(BASE_DOCKER_LABEL)
 METADATA_VAR += DockerNamespace=$(DOCKER_NS)
 
-GO_VER = 1.15.7
+GO_VER = 1.16.7
 GO_TAGS ?=
 
 RELEASE_EXES = orderer $(TOOLS_EXES)
 RELEASE_IMAGES = baseos ccenv orderer peer tools
 RELEASE_PLATFORMS = darwin-amd64 linux-amd64 windows-amd64
-TOOLS_EXES = configtxgen configtxlator cryptogen discover idemixgen osnadmin peer
+TOOLS_EXES = configtxgen configtxlator cryptogen discover ledgerutil osnadmin peer
 
 pkgmap.configtxgen    := $(PKGNAME)/cmd/configtxgen
 pkgmap.configtxlator  := $(PKGNAME)/cmd/configtxlator
 pkgmap.cryptogen      := $(PKGNAME)/cmd/cryptogen
 pkgmap.discover       := $(PKGNAME)/cmd/discover
-pkgmap.idemixgen      := $(PKGNAME)/cmd/idemixgen
+pkgmap.ledgerutil     := $(PKGNAME)/cmd/ledgerutil
 pkgmap.orderer        := $(PKGNAME)/cmd/orderer
 pkgmap.osnadmin       := $(PKGNAME)/cmd/osnadmin
 pkgmap.peer           := $(PKGNAME)/cmd/peer

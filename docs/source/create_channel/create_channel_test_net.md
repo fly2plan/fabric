@@ -61,7 +61,7 @@ By default, when you start the test network, it does not contain any channels. T
 
 ### Set up the configtxgen tool
 
-Channels are created by generating a channel creation transaction in a genesis block, and then passing that genesis block to an ordering service node in a join request. The channel creation transaction specifies the initial configuration of the channel and can be created by the [configtxgen](../commands/configtxgen.html) tool. The tool reads the `configtx.yaml` file that defines the configuration of our channel, and then writes the relevant information into the channel creation transaction and outputs a genesis block including the channel creation transaction. When you [installed Fabric](install.html), the `configtxgen` tool was installed in the `fabric-samples\bin` directory for you.
+Channels are created by generating a channel creation transaction in a genesis block, and then passing that genesis block to an ordering service node in a join request. The channel creation transaction specifies the initial configuration of the channel and can be created by the [configtxgen](../commands/configtxgen.html) tool. The tool reads the `configtx.yaml` file that defines the configuration of our channel, and then writes the relevant information into the channel creation transaction and outputs a genesis block including the channel creation transaction. When you [installed Fabric](../install.html), the `configtxgen` tool was installed in the `fabric-samples\bin` directory for you.
 
 Ensure that you are still operating from the `test-network` directory of your local clone of `fabric-samples` and run this command:
 
@@ -104,15 +104,13 @@ This `configtx.yaml` file contains the following information that we will use to
             <<: *OrdererDefaults
             Organizations:
                 - *OrdererOrg
-            Capabilities:
-                <<: *OrdererCapabilities
+            Capabilities: *OrdererCapabilities
         Application:
             <<: *ApplicationDefaults
             Organizations:
                 - *Org1
                 - *Org2
-            Capabilities:
-                <<: *ApplicationCapabilities
+            Capabilities: *ApplicationCapabilities
     ```
 
 The profile includes both peer organizations, `Org1` and `Org2` as well as the ordering organization `OrdererOrg`. Additional ordering nodes and ordering organizations can be added or removed from the consenter set at a later time using a channel update transaction.
@@ -228,7 +226,7 @@ export CORE_PEER_ADDRESS=localhost:7051
 
 In order to use the peer CLI, we also need to modify the `FABRIC_CONFIG_PATH`:
 ```
-FABRIC_CFG_PATH=$PWD/../config/
+export FABRIC_CFG_PATH=$PWD/../config/
 ```
 To join the test network peer from `Org1` to the channel `channel1` simply pass the genesis block in a join request:
 ```
@@ -293,7 +291,7 @@ We can now start using the `configtxlator` tool to start working with the channe
 
 ```
 configtxlator proto_decode --input config_block.pb --type common.Block --output config_block.json
-jq .data.data[0].payload.data.config config_block.json > config.json
+jq '.data.data[0].payload.data.config' config_block.json > config.json
 ```
 
 These commands convert the channel configuration block into a streamlined JSON, `config.json`, that will serve as the baseline for our update. Because we don't want to edit this file directly, we will make a copy that we can edit. We will use the original channel config in a future step.
@@ -357,7 +355,7 @@ cd channel-artifacts
 You can then decode and copy the configuration block.
 ```
 configtxlator proto_decode --input config_block.pb --type common.Block --output config_block.json
-jq .data.data[0].payload.data.config config_block.json > config.json
+jq '.data.data[0].payload.data.config' config_block.json > config.json
 cp config.json config_copy.json
 ```
 

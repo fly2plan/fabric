@@ -4,7 +4,8 @@ go 1.14
 
 require (
 	code.cloudfoundry.org/clock v1.0.0
-	github.com/DataDog/zstd v1.4.8 // indirect
+	github.com/DataDog/zstd v1.4.5 // indirect
+	github.com/IBM/idemix v0.0.0-20210930104432-e4a1410f5353
 	github.com/Knetic/govaluate v3.0.0+incompatible
 	github.com/Shopify/sarama v1.20.1
 	github.com/Shopify/toxiproxy v2.1.4+incompatible // indirect
@@ -21,7 +22,7 @@ require (
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fly2plan/fabric-config v0.1.1-0.20211018165300-8b39b562f7dd
 	github.com/fly2plan/fabric-protos-go v0.0.0-20211018155845-7bcb335ea94c
-	github.com/fly2plan/mirbft v0.0.0-20211026105550-e94ee663dedf
+	github.com/fly2plan/mirbft v0.0.0-20211109084553-88cfdd64f553
 	github.com/frankban/quicktest v1.11.3 // indirect
 	github.com/fsouza/go-dockerclient v1.7.0
 	github.com/go-kit/kit v0.9.0
@@ -30,11 +31,11 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/hashicorp/go-version v1.2.0
-	github.com/hyperledger/fabric-amcl v0.0.0-20200424173818-327c9e2cf77a
+	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/hyperledger/fabric-chaincode-go v0.0.0-20201119163726-f8ef75b17719
 	github.com/hyperledger/fabric-config v0.1.0
 	github.com/hyperledger/fabric-lib-go v1.0.0
-	github.com/hyperledger/fabric-protos-go v0.0.0-20210505131505-0ac7fd605762
+	github.com/hyperledger/fabric-protos-go v0.0.0-20211006172752-14f4318ce71c
 	github.com/kr/pretty v0.2.1
 	github.com/magiconair/properties v1.8.1 // indirect
 	github.com/mattn/go-runewidth v0.0.4 // indirect
@@ -65,10 +66,9 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20181228115726-23731bf9ba55
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
-	golang.org/x/crypto v0.0.0-20201221181555-eec23a3978ad
-	golang.org/x/sys v0.0.0-20211025201205-69cdffdb9359 // indirect
+	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
+	golang.org/x/sys v0.0.0-20211109065445-02f5c0300f6e // indirect
 	golang.org/x/tools v0.1.7
-	google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013 // indirect
 	google.golang.org/grpc v1.31.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
