@@ -175,8 +175,8 @@ var (
 	peer3Mock        = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("3"), address: "peer3:10051", mspid: "msp2"}}
 	peer4Mock        = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("4"), address: "peer4:11051", mspid: "msp3"}}
 	unavailable1Mock = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("5"), address: "unavailable1:12051", mspid: "msp1"}}
-	unavailable2Mock = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("6"), address: "unavailable1:13051", mspid: "msp1"}}
-	unavailable3Mock = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("7"), address: "unavailable1:14051", mspid: "msp1"}}
+	unavailable2Mock = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("6"), address: "unavailable2:13051", mspid: "msp1"}}
+	unavailable3Mock = &endorser{endpointConfig: &endpointConfig{pkiid: []byte("7"), address: "unavailable3:14051", mspid: "msp1"}}
 	endorsers        = map[string]*endorser{
 		localhostMock.address: localhostMock,
 		peer1Mock.address:     peer1Mock,
@@ -198,7 +198,7 @@ func TestEvaluate(t *testing.T) {
 			name:      "no endorsers",
 			plan:      endorsementPlan{},
 			members:   []networkMember{},
-			errString: "rpc error: code = Unavailable desc = no endorsing peers found for chaincode test_chaincode in channel test_channel",
+			errString: "rpc error: code = Unavailable desc = no peers available to evaluate chaincode test_chaincode in channel test_channel",
 		},
 		{
 			name: "five endorsers, prefer local org",
@@ -277,7 +277,7 @@ func TestEvaluate(t *testing.T) {
 				{"id5", "peer4:11051", "msp3", 7},
 			},
 			transientData: map[string][]byte{"transient-key": []byte("transient-value")},
-			errString:     "rpc error: code = Unavailable desc = no endorsers found in the gateway's organization; retry specifying target organization(s) to protect transient data: no endorsing peers found for chaincode test_chaincode in channel test_channel",
+			errString:     "rpc error: code = Unavailable desc = no endorsers found in the gateway's organization; retry specifying target organization(s) to protect transient data: no peers available to evaluate chaincode test_chaincode in channel test_channel",
 		},
 		{
 			name: "evaluate with transient data and target (non-local) orgs should select the highest block height peer",
@@ -399,7 +399,7 @@ func TestEvaluate(t *testing.T) {
 					PKIid:    []byte("ill-defined"),
 				}})
 			},
-			errString: "rpc error: code = Unavailable desc = no endorsing peers found for chaincode test_chaincode in channel test_channel",
+			errString: "rpc error: code = Unavailable desc = no peers available to evaluate chaincode test_chaincode in channel test_channel",
 		},
 	}
 	for _, tt := range tests {
@@ -673,7 +673,8 @@ func TestEndorse(t *testing.T) {
 				{"g1": 1, "g3": 1},
 				{"g2": 1, "g3": 1},
 			},
-			errString: "rpc error: code = Unavailable desc = failed to select a set of endorsers that satisfy the endorsement policy",
+			// the following is a substring of the error message - the endpoints get listed in indeterminate order which would lead to flaky test
+			errString: "rpc error: code = Unavailable desc = failed to select a set of endorsers that satisfy the endorsement policy due to unavailability of peers",
 		},
 		{
 			name: "non-matching responses",
@@ -682,7 +683,7 @@ func TestEndorse(t *testing.T) {
 				"g2": {{endorser: peer2Mock, height: 5}},     // msp2
 			},
 			localResponse: "different_response",
-			errString:     "rpc error: code = Aborted desc = failed to assemble transaction: ProposalResponsePayloads do not match",
+			errString:     "rpc error: code = Aborted desc = failed to assemble transaction: ProposalResponsePayloads do not match (base64): 'EhQaEgjIARoNbW9ja19yZXNwb25zZQ==' vs 'EhkaFwjIARoSZGlmZmVyZW50X3Jlc3BvbnNl'",
 		},
 		{
 			name: "discovery fails",
@@ -1198,6 +1199,16 @@ func TestCommitStatus(t *testing.T) {
 				BlockNumber: 101,
 			},
 		},
+		{
+			name:      "context timeout",
+			finderErr: context.DeadlineExceeded,
+			errString: "rpc error: code = DeadlineExceeded desc = context deadline exceeded",
+		},
+		{
+			name:      "context canceled",
+			finderErr: context.Canceled,
+			errString: "rpc error: code = Canceled desc = context canceled",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1624,7 +1635,7 @@ func TestNilArgs(t *testing.T) {
 }
 
 func TestRpcErrorWithBadDetails(t *testing.T) {
-	err := rpcError(codes.InvalidArgument, "terrible error", nil)
+	err := newRpcError(codes.InvalidArgument, "terrible error", nil)
 	require.ErrorIs(t, err, status.Error(codes.InvalidArgument, "terrible error"))
 }
 
@@ -1741,7 +1752,6 @@ func prepareTest(t *testing.T, tt *testDef) *preparedTest {
 	dialer.Returns(nil, nil)
 	server.registry.endpointFactory = createEndpointFactory(t, epDef, dialer.Spy)
 
-	require.NoError(t, err, "Failed to sign the proposal")
 	ctx := context.WithValue(context.Background(), contextKey("orange"), "apples")
 
 	pt := &preparedTest{
@@ -1765,7 +1775,7 @@ func prepareTest(t *testing.T, tt *testDef) *preparedTest {
 }
 
 func checkError(t *testing.T, err error, errString string, details []*pb.ErrorDetail) {
-	require.EqualError(t, err, errString)
+	require.ErrorContains(t, err, errString)
 	s, ok := status.FromError(err)
 	require.True(t, ok, "Expected a gRPC status error")
 	require.Len(t, s.Details(), len(details))
