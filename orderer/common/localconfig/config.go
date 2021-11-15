@@ -33,8 +33,14 @@ type TopLevel struct {
 	Admin                Admin
 }
 
+// Type is the type of the orderer:
+//  - This type was introduced as the cluster settings must be unique to a cluster
+//  - Currently this type can have values "etcdraft" or "hlmirbft"
+type Type string
+
 // General contains config which should be common among all orderer types.
 type General struct {
+	Type              Type
 	ListenAddress     string
 	ListenPort        uint16
 	TLS               TLS
@@ -333,7 +339,7 @@ func (c *configCache) load() (*TopLevel, error) {
 	if !ok {
 		err := config.EnhancedExactUnmarshal(&uconf)
 		if err != nil {
-			return nil, fmt.Errorf("Error unmarshaling config into struct: %s", err)
+			return nil, fmt.Errorf("Error unmarshalling config into struct: %s", err)
 		}
 
 		serializedConf, err = json.Marshal(uconf)

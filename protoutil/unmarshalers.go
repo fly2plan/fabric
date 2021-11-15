@@ -11,6 +11,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go/common"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/msp"
+	"github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric-protos-go/peer"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/pkg/errors"
@@ -52,6 +53,13 @@ func UnmarshalEnvelope(encoded []byte) (*cb.Envelope, error) {
 	envelope := &cb.Envelope{}
 	err := proto.Unmarshal(encoded, envelope)
 	return envelope, errors.Wrap(err, "error unmarshaling Envelope")
+}
+
+// UnmarshalSubmitRequest unmarshals bytes to a SubmitRequest
+func UnmarshalSubmitRequest(encoded []byte) (*orderer.SubmitRequest, error) {
+	submitRequest := &orderer.SubmitRequest{}
+	err := proto.Unmarshal(encoded, submitRequest)
+	return submitRequest, errors.Wrap(err, "error unmarshalling SubmitRequest")
 }
 
 // UnmarshalChannelHeader unmarshals bytes to a ChannelHeader

@@ -20,6 +20,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hyperledger/fabric/orderer/consensus/hlmirbft"
+
+	// This is essentially the main package for the orderer
+
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric-lib-go/healthz"
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -813,8 +817,13 @@ func initializeMultichannelRegistrar(
 			etcdConsenter := initializeEtcdraftConsenter(consenters, conf, lf, clusterDialer, bootstrapBlock, repInitiator, srvConf, srv, registrar, metricsProvider, bccsp)
 			icr = etcdConsenter.InactiveChainRegistry
 		} else if bootstrapBlock == nil {
-			// without a system channel: assume cluster type, InactiveChainRegistry == nil, no go-routine.
-			consenters["etcdraft"] = etcdraft.New(clusterDialer, conf, srvConf, srv, registrar, nil, metricsProvider, bccsp)
+			// cluster must be assigned to only one OSN type
+			switch conf.General.Type {
+			case "etcdraft":
+				consenters["etcdraft"] = etcdraft.New(clusterDialer, conf, srvConf, srv, registrar, nil, metricsProvider, bccsp)
+			case "hlmirbft":
+				consenters["hlmirbft"] = hlmirbft.New(clusterDialer, conf, srvConf, srv, registrar, nil, metricsProvider, bccsp)
+			}
 		}
 	}
 

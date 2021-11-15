@@ -14,8 +14,8 @@ import (
 	"os"
 	"reflect"
 
+	"github.com/fly2plan/fabric-config/protolator"
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger/fabric-config/protolator"
 	_ "github.com/hyperledger/fabric-protos-go/common"
 	cb "github.com/hyperledger/fabric-protos-go/common" // Import these to register the proto types
 	_ "github.com/hyperledger/fabric-protos-go/msp"

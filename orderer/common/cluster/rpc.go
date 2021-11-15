@@ -129,7 +129,12 @@ func (s *RPC) SendSubmit(destination uint64, request *orderer.SubmitRequest, rep
 	s.submitLock.Lock()
 	defer s.submitLock.Unlock()
 
-	err = stream.SendWithReport(req, unmapOnFailure)
+	if report == nil {
+		err = stream.Send(req)
+	} else {
+		err = stream.SendWithReport(req, unmapOnFailure)
+	}
+
 	if err != nil {
 		s.unMapStream(destination, SubmitOperation, stream.ID)
 	}
