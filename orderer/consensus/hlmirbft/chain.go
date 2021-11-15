@@ -1305,6 +1305,8 @@ func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clie
 	c.logger.Infof("< %+v >", c.Node.networkState)
 	c.logger.Infof("< %+v >", c.Node.checkpointSeqNo)
 
+	lastBlockData := &common.BlockData{}
+
 	if newNetworkConfigisNetworkConfig {
 		networkState.PendingReconfigurations = nil
 		newNetworkConfig := pr[1].GetNewConfig()
@@ -1326,9 +1328,12 @@ func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clie
 		c.writeConfigBlock(block)
 		c.removeConfigEnv()
 		//JIRA FLY2-106 remove reconfiguration
+		lastBlockData = c.lastBlock.Data
 		defer func() {
 			c.pendingConfigs = PopReconfiguration(c.pendingConfigs)
 		}()
+	} else {
+		lastBlockData = nil
 	}
 
 	networkStateBytes, err := proto.Marshal(networkState)
@@ -1338,7 +1343,7 @@ func (c *Chain) Snap(seqNo uint64, networkConfig *msgs.NetworkState_Config, clie
 	//JIRA FLY2-106 Generating last block bytes to be added to snap data
 	lastBlockBytes, err := proto.Marshal(&common.Block{
 		Header: c.lastBlock.Header,
-		Data:   c.lastBlock.Data,
+		Data:   lastBlockData,
 	})
 	if err != nil {
 
