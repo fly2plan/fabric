@@ -808,11 +808,6 @@ func (c *Chain) catchUp(blockBytes []byte) error {
 	if c.lastBlock.Header.Number >= b.Header.Number {
 		c.logger.Warnf("Snapshot is at block [%d], local block number is %d, no sync needed", b.Header.Number, c.lastBlock.Header.Number)
 		return nil
-	} else if b.Header.Number == c.lastBlock.Header.Number+1 {
-		c.logger.Infof("The only missing block [%d] is encapsulated in snapshot, committing it to shortcut catchup process", b.Header.Number)
-		c.commitBlock(b)
-		c.lastBlock = b
-		return nil
 	}
 
 	puller, err := c.createPuller()
